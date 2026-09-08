@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+from typing import cast
 
 import asyncpg
 
@@ -123,6 +124,30 @@ async def close_pool() -> None:
         logger.info("[db] asyncpg pool closed")
 
 
+class _ReleaseOnClose:
+    """Pooled asyncpg connection whose close() releases instead of destroying.
+
+    Delegates everything else to the underlying connection.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self._conn = conn
+
+    async def close(self) -> None:
+        if _pool is None:
+            await self._conn.close()
+            return
+        try:
+            await _pool.release(self._conn)
+        except Exception:
+            await self._conn.close()
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+
 async def get_connection() -> asyncpg.Connection:
     """
     Return a connection from the pool (or a direct connection as fallback).
@@ -138,7 +163,11 @@ async def get_connection() -> asyncpg.Connection:
         try:
             conn = await _pool.acquire(timeout=5)
             await _circuit_success()
-            return conn
+            # asyncpg pooled proxies DESTROY the real connection on close()
+            # (asyncpg/pool.py PoolConnectionProxy.close -> _con.close()).
+            # 70 call sites use close() as "done with it" — without this
+            # wrapper every request paid a full reconnect (~1 RTT).
+            return cast(asyncpg.Connection, _ReleaseOnClose(conn))
         except Exception as exc:
             logger.warning(
                 "[db] Pool acquire failed (%s) — falling back to direct connect",
