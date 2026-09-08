@@ -98,7 +98,9 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
 
     if provider == "google":
         key = gen_api_key()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        # Key goes in the x-goog-api-key header, NOT the URL — httpx logs
+        # request URLs at INFO level, so query-param keys leak into logs
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -108,7 +110,12 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
             payload["generationConfig"]["response_mime_type"] = "application/json"
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
-                url, headers={"Content-Type": "application/json"}, json=payload
+                url,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": key,
+                },
+                json=payload,
             )
             resp.raise_for_status()
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"]

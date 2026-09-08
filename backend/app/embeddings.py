@@ -61,14 +61,18 @@ def _get_api_key(provider: str) -> str:
 
 def _call_google(texts: List[str], api_key: str) -> List[List[float]]:
     model = embed_model()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents?key={api_key}"
+    # Key in header, not URL — httpx logs request URLs at INFO
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
     requests = [
         {"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts
     ]
     with httpx.Client(timeout=60.0) as client:
         resp = client.post(
             url,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
             json={"requests": requests},
         )
         resp.raise_for_status()
@@ -77,14 +81,18 @@ def _call_google(texts: List[str], api_key: str) -> List[List[float]]:
 
 async def _call_google_async(texts: List[str], api_key: str) -> List[List[float]]:
     model = embed_model()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents?key={api_key}"
+    # Key in header, not URL — httpx logs request URLs at INFO
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
     requests = [
         {"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts
     ]
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             url,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            },
             json={"requests": requests},
         )
         resp.raise_for_status()
