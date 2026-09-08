@@ -38,7 +38,7 @@ export default function AiSettingsPage() {
     max_tokens: 1024,
     embed_model: '',
     embed_api_key: '',
-    embed_dim: 3072,
+    embed_dim: 768,
   });
 
   useEffect(() => {
@@ -276,22 +276,15 @@ export default function AiSettingsPage() {
           <label className="text-xs text-muted-foreground mb-1 block">
             Vector dimension{' '}
             <span className="text-muted-foreground/70">
-              (auto-detected, override if needed)
+              (auto-detected from the embedding model — must match the
+              vector column in the database, so it is not editable here)
             </span>
           </label>
           <input
-            type="number"
-            step="1"
-            min="64"
-            max="8192"
+            type="text"
             value={config.embed_dim}
-            onChange={e =>
-              setConfig(p => ({
-                ...p,
-                embed_dim: parseInt(e.target.value) || 0,
-              }))
-            }
-            className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
+            disabled
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
           />
         </div>
       </section>
