@@ -109,7 +109,7 @@ def temperature() -> float:
 
 
 def max_tokens() -> int:
-    return int(_resolve("max_tokens", "GENAI_MAX_OUTPUT_TOKENS", "1024"))
+    return int(_resolve("max_tokens", "GENAI_MAX_OUTPUT_TOKENS", "4096"))
 
 
 def invalidate_cache():

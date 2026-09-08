@@ -106,6 +106,12 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": temp, "maxOutputTokens": max_tok},
         }
+        if model.startswith(("gemini-3", "gemini-2.5")):
+            # Thinking models spend maxOutputTokens on hidden reasoning —
+            # with the default budget the JSON gets truncated mid-object
+            payload["generationConfig"]["thinkingConfig"] = {
+                "thinkingBudget": 0
+            }
         if json_mode:
             payload["generationConfig"]["response_mime_type"] = "application/json"
         with httpx.Client(timeout=30.0) as client:

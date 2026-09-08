@@ -1400,7 +1400,8 @@ def chat_with_ai(
             label=sources[i] if i < len(sources) else f"[{i+1}] Unknown",
             doc_id=str(chunk.get("doc_id", "")),
             chunk_id=str(chunk.get("chunk_id", "")),
-            faiss_id=chunk.get("faiss_id", -1),
+            # pgvector-era chunks have no faiss_id (legacy FAISS column)
+            faiss_id=chunk.get("faiss_id") or -1,
             score=citation_confidence,
         )
         citations.append(citation)
