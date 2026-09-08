@@ -154,7 +154,12 @@ async def ingest(
 
             # 5) Generate embeddings and store in pgvector column
             _log.info("[kb] starting embed_texts for %d chunks", len(unique_chunks))
-            vectors = await embed_texts_async(unique_chunks)
+            try:
+                vectors = await embed_texts_async(unique_chunks)
+            except RuntimeError as e:
+                # No embedding API key configured — actionable 400, not a 500
+                conn.rollback()
+                raise HTTPException(400, str(e))
             _log.info("[kb] embed_texts done; writing to pgvector")
 
             # 6) Update chunks with embedding vectors
@@ -329,7 +334,10 @@ async def search(
     """Search knowledge base for similar content using pgvector."""
     org_id = require_org_context(request)
 
-    query_vector = (await embed_texts_async([q]))[0]
+    try:
+        query_vector = (await embed_texts_async([q]))[0]
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
 
     with get_db_connection() as conn:
         results = []
