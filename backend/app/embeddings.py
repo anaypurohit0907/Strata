@@ -68,7 +68,7 @@ def _call_google(texts: List[str], api_key: str) -> List[List[float]]:
             "model": f"models/{model}",
             "content": {"parts": [{"text": t}]},
             # Google returns 3072 dims by default; column is vector(768)
-            "output_dimensionality": embed_dim(),
+            "output_dimensionality": _embed_dim(),
         }
         for t in texts
     ]
@@ -94,7 +94,7 @@ async def _call_google_async(texts: List[str], api_key: str) -> List[List[float]
             "model": f"models/{model}",
             "content": {"parts": [{"text": t}]},
             # Google returns 3072 dims by default; column is vector(768)
-            "output_dimensionality": embed_dim(),
+            "output_dimensionality": _embed_dim(),
         }
         for t in texts
     ]
