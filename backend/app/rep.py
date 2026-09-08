@@ -395,9 +395,15 @@ async def escalate(
             if not ticket:
                 raise HTTPException(status_code=404, detail="Ticket not found")
 
-            # Permission check: Allow rep/admin OR ticket creator
-            user_role = user.role or "customer"
-            is_rep_or_admin = user_role in ("rep", "admin")
+            # Permission check: Allow rep/admin OR ticket creator.
+            # Org-scoped role (request.state) first — the global role is
+            # only a fallback when org context didn't resolve the role.
+            org_role = getattr(request.state, "user_role_in_org", None)
+            if org_role is not None:
+                is_rep_or_admin = org_role in ("rep", "admin", "owner")
+            else:
+                user_role = user.role or "customer"
+                is_rep_or_admin = user_role in ("rep", "admin")
             is_ticket_creator = str(ticket["created_by"]) == user.id
 
             if not (is_rep_or_admin or is_ticket_creator):

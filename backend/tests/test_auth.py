@@ -437,7 +437,7 @@ class TestOrgMiddlewareDispatch:
         assert captured["role"] == "admin"
 
     @pytest.mark.asyncio
-    async def test_non_member_raises_403(self):
+    async def test_non_member_returns_403_response(self):
         middleware, _, call_next = self._make_middleware()
         request = _build_request(
             auth_header=f"Bearer {make_jwt()}",
@@ -451,9 +451,10 @@ class TestOrgMiddlewareDispatch:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            with pytest.raises(HTTPException) as exc:
-                await middleware.dispatch(request, call_next)
-        assert exc.value.status_code == 403
+            # Middleware can't raise HTTPException cleanly (BaseHTTPMiddleware
+            # bypasses exception handlers → 500) — it returns a 403 response
+            response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 403
 
 
 # ═════════════════════════════════════════════════════════════════════════

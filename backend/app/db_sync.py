@@ -11,6 +11,7 @@ import psycopg
 from fastapi import HTTPException
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+from psycopg_pool import PoolTimeout
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
@@ -64,9 +65,22 @@ except Exception:
 
 
 def get_db_connection():
-    """Return a pooled connection (context manager) or a fresh direct connection."""
+    """Return a pooled connection (context manager) or a fresh direct connection.
+
+    Pool exhaustion surfaces as a clean 503 (with Retry-After) rather than
+    a raw 500 — the pool is intentionally small (Supabase tier limits), so
+    bursts happen and callers should retry.
+    """
     if _pool is not None:
-        return _pool.connection()
+        try:
+            return _pool.connection()
+        except PoolTimeout as exc:
+            logger.warning("[db_sync] pool exhausted: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Server busy — please retry in a few seconds",
+                headers={"Retry-After": "2"},
+            )
     if not DATABASE_URL:
         raise HTTPException(500, "DATABASE_URL not configured")
     return psycopg.connect(

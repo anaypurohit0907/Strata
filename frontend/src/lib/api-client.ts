@@ -143,7 +143,16 @@ export async function apiCall<T = unknown>(
   }
 
   const text = await response.text();
-  const responseData = text ? JSON.parse(text) : {};
+  let responseData: unknown = {};
+  if (text) {
+    try {
+      responseData = JSON.parse(text);
+    } catch {
+      // Non-JSON body (proxy HTML error page, gateway 200-with-HTML) —
+      // preserve the raw text instead of throwing a confusing SyntaxError
+      responseData = { message: text.slice(0, 500) };
+    }
+  }
 
   if (method === 'GET') {
     cacheSet(cacheKey(endpoint, orgId), responseData);
@@ -173,6 +182,12 @@ export const api = {
   patch: <T = unknown>(endpoint: string, body: unknown, orgId?: string | null) =>
     apiCall<T>(endpoint, { method: 'PATCH', body, orgId }),
 };
+
+/** Drop every cached GET response — call on sign-out / user switch so a
+ * different user on the same SPA session never sees the prior user's data. */
+export function clearApiCache() {
+  getCache.clear();
+}
 
 /**
  * Get auth token without making an API call

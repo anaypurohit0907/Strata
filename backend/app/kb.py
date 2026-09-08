@@ -32,8 +32,18 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE_CHARS", "2400"))
 OVERLAP = int(os.getenv("CHUNK_OVERLAP_CHARS", "400"))
 
 
-async def require_rep(user: User):
-    """Ensure user has rep / admin role."""
+async def require_rep(user: User, request: Request = None):
+    """Ensure user has rep / admin role — org-scoped first, global fallback.
+
+    The old JWT-global-role check locked out org admins whose global role
+    was customer; the fallback only fires when no org role was resolved.
+    """
+    if request is not None:
+        org_role = getattr(request.state, "user_role_in_org", None)
+        if org_role is not None:
+            if org_role not in ("rep", "admin", "owner"):
+                raise HTTPException(status_code=403, detail="Rep/Admin access required")
+            return
     if user.role not in ["rep", "admin"]:
         raise HTTPException(status_code=403, detail="Rep/Admin access required")
 
@@ -55,7 +65,7 @@ async def ingest(
     filename: Optional[str] = Form(None),
 ):
     org_id = require_org_context(request)
-    await require_rep(user)
+    await require_rep(user, request)
 
     if not file and not raw_text:
         raise HTTPException(400, "Provide a file or raw_text")
@@ -225,7 +235,7 @@ class DocumentItem(BaseModel):
 async def list_documents(request: Request, user: User = Depends(get_current_user)):
     """Get list of knowledge base documents (rep/admin only)."""
     org_id = require_org_context(request)
-    await require_rep(user)
+    await require_rep(user, request)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -265,7 +275,7 @@ async def delete_document(
 ):
     """Delete a KB document and its chunks (rep/admin only)."""
     org_id = require_org_context(request)
-    await require_rep(user)
+    await require_rep(user, request)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:

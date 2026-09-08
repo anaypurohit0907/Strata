@@ -1026,11 +1026,6 @@ def chat_with_ai(
     """Generate AI response for a ticket using enhanced RAG with comprehensive observability."""
     org_id = require_org_context(request)
 
-    # Enforce AI query quota (raises 402 if exhausted)
-    from .entitlements import increment_ai_query
-
-    increment_ai_query(org_id)
-
     # Start observability tracking
     observer = get_observer()
     operation_id = observer.start_operation(ticket_id, user.id, "chat", org_id)
@@ -1044,7 +1039,8 @@ def chat_with_ai(
     from .rag import compute_confidence, retrieve, should_escalate
     from .redact import scrub
 
-    # 1) Verify ticket exists and user has access
+    # 1) Verify ticket exists and user has access (BEFORE quota — failed
+    # access checks must not consume AI queries)
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             # Check ticket access (same rules as viewing ticket)
@@ -1072,12 +1068,19 @@ def chat_with_ai(
         ticket_id
     )
 
-    # 2) Rate limiting per ticket
+    # 1c) Rate limiting per ticket — checked BEFORE quota so 429s don't
+    # consume AI queries
     now = time.time()
     last_chat = chat_cooldown.get(ticket_id, 0)
     if now - last_chat < CHAT_COOLDOWN_SECONDS:
         raise HTTPException(status_code=429, detail="Please wait before asking again")
     chat_cooldown[ticket_id] = now
+
+    # 1d) Enforce AI query quota (after access + rate checks so failed
+    # requests never consume queries)
+    from .entitlements import increment_ai_query
+
+    increment_ai_query(org_id)
 
     # 3) PII scrub the query
     clean_query = scrub(payload.query)
@@ -1836,6 +1839,20 @@ def bulk_ticket_action(
             )
         elif action == "assign":
             assignee = payload.assignee_id or user.id
+            # Assignee must be a member of THIS org — otherwise tickets can
+            # be handed to arbitrary platform users (spam + metric pollution)
+            cursor.execute(
+                """
+                SELECT 1 FROM app.organization_members
+                WHERE user_id = %s::uuid AND organization_id = %s
+                """,
+                (assignee, org_id),
+            )
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Assignee is not a member of this organization",
+                )
             cursor.execute(
                 """
                 UPDATE app.tickets

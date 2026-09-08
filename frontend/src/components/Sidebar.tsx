@@ -452,6 +452,8 @@ export function Sidebar({
   };
 
   const handleLogout = async () => {
+    const { clearApiCache } = await import('@/lib/api-client');
+    clearApiCache();
     await supabase.auth.signOut();
     router.push('/login');
   };
