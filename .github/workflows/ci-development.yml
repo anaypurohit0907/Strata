@@ -68,7 +68,7 @@ jobs:
           CI: true
 
       - name: 📊 Upload Coverage Reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           flags: frontend
           directory: ./frontend/coverage
@@ -147,7 +147,7 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
 
       - name: 📊 Upload Coverage Reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           flags: backend
           directory: ./backend
@@ -259,6 +259,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install requests
 
       - name: 📥 Install Frontend Dependencies
         working-directory: ./frontend
@@ -280,6 +281,9 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          DATABASE_PASSWORD: test_password
+          ENVIRONMENT: development
 
       - name: 🚀 Start Frontend
         working-directory: ./frontend
@@ -316,7 +320,8 @@ jobs:
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
           
           if [[ "${{ needs.frontend-checks.result }}" == "success" && 
-                "${{ needs.backend-checks.result }}" == "success" ]]; then
+                "${{ needs.backend-checks.result }}" == "success" &&
+                "${{ needs.integration-tests.result }}" == "success" ]]; then
             echo "✅ Quality Gate PASSED - Ready for merge!"
             exit 0
           else
