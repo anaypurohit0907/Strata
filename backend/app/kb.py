@@ -32,7 +32,7 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE_CHARS", "2400"))
 OVERLAP = int(os.getenv("CHUNK_OVERLAP_CHARS", "400"))
 
 
-def require_rep(user: User):
+async def require_rep(user: User):
     """Ensure user has rep / admin role."""
     if user.role not in ["rep", "admin"]:
         raise HTTPException(status_code=403, detail="Rep/Admin access required")
@@ -55,7 +55,7 @@ async def ingest(
     filename: Optional[str] = Form(None),
 ):
     org_id = require_org_context(request)
-    require_rep(user)
+    await require_rep(user)
 
     if not file and not raw_text:
         raise HTTPException(400, "Provide a file or raw_text")
@@ -208,7 +208,7 @@ class DocumentItem(BaseModel):
 async def list_documents(request: Request, user: User = Depends(get_current_user)):
     """Get list of knowledge base documents (rep/admin only)."""
     org_id = require_org_context(request)
-    require_rep(user)
+    await require_rep(user)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -248,7 +248,7 @@ async def delete_document(
 ):
     """Delete a KB document and its chunks (rep/admin only)."""
     org_id = require_org_context(request)
-    require_rep(user)
+    await require_rep(user)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
