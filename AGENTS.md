@@ -82,7 +82,7 @@ Integration test (both servers running): `python scripts/rag_validation_suite.py
 ## RAG / AI pipeline
 - 2400 char chunks, 400 overlap → embed → FAISS `IndexFlatIP` per org → MMR re-ranking (auto-disabled when KB < 50 chunks) → LLM with structured JSON → CASPER confidence scoring (intent-adaptive, KB-density-calibrated)
 - **AI is provider-agnostic** (`app/ai.py`, `app/embeddings.py`): provider auto-detected from model name prefix (`gemini-*` → Google, `claude-*` → Anthropic, else OpenAI-compat/Groq; embeddings: google/openai/jina)
-- Model + API keys are **runtime-configurable**: DB `app.ai_settings` (single row, `LIMIT 1`, global) overrides env, editable via admin UI `/admin/settings/ai` (BYOK). Defaults: `gemini-3.5-flash`, `gemini-embedding-001` (768-dim). Don't use `gemini-2.x-*` gen models — Google blocks them for new API keys (404). Empty embedding key falls back to the generation key. Clear `invalidate_cache()` if you change the table directly
+- Model + API keys are **runtime-configurable**: DB `app.ai_settings` (single row, `LIMIT 1`, global) overrides env, editable via admin UI `/admin/settings/ai` (BYOK). Defaults: `gemini-3.5-flash`, `gemini-embedding-001` (1536-dim via output_dimensionality; DB column vector(1536) after migration 0035). Don't use `gemini-2.x-*` gen models — Google blocks them for new API keys (404). Empty embedding key falls back to the generation key. Clear `invalidate_cache()` if you change the table directly
 - Tuning env: `RAG_TOP_K` (6), `RAG_MIN_SCORE` (0.25), `RAG_MAX_CONTEXT_CHARS` (12000), `MMR_LAMBDA` (0.7), `CONFIDENCE_THRESHOLD` (0.55), `CONFIDENCE_MIN_CHUNKS` (2)
 - `app/redact.py` scrubs PII from context before it reaches the LLM
 
