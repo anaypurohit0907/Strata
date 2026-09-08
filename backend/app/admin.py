@@ -106,13 +106,16 @@ async def set_role(
         if role not in ("customer", "rep", "admin"):
             raise HTTPException(status_code=422, detail=f"Invalid role: {role}")
 
-        # Use a single transaction with FOR UPDATE to prevent race:
+        # Use a single transaction to prevent race:
         # two concurrent demotions must not both see admin_count > 1 and leave 0 admins.
         async with conn.transaction():
             if role != "admin":
-                admin_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM app.user_roles WHERE role = 'admin' FOR UPDATE"
+                # Lock all admin rows (FOR UPDATE — aggregates can't take row
+                # locks), then count in Python
+                admin_rows = await conn.fetch(
+                    "SELECT user_id FROM app.user_roles WHERE role = 'admin' FOR UPDATE"
                 )
+                admin_count = len(admin_rows)
 
                 current_role = await conn.fetchval(
                     "SELECT role FROM app.user_roles WHERE user_id = $1",
@@ -1484,5 +1487,62 @@ async def update_ai_settings(body: dict, user: User = Depends(get_current_user))
 
     from .ai_settings import invalidate_cache
 
+    # Embedding model switched → existing vectors are from a different
+    # embedding space. Mixed vectors silently poison similarity search,
+    # so they are cleared; each org must re-ingest (fresh embeddings at
+    # the new model's space).
+    reembed_warning = None
+    if "embed_model" in updates:
+        from .ai_settings import embed_model as _prev_model
+
+        prev = _prev_model()
+        invalidate_cache()
+        new = _resolve_embed_model_after_update()
+        if prev != new:
+            cleared = await _clear_all_embeddings()
+            logger.warning(
+                "[admin] embed_model changed %s -> %s — cleared %d chunk "
+                "vectors and all title embeddings (re-ingest required)",
+                prev,
+                new,
+                cleared,
+            )
+            reembed_warning = (
+                f"Embedding model changed to {new}. All stored vectors were "
+                f"cleared ({cleared} rows) — re-upload KB documents and "
+                f"re-save tickets' titles are re-embedded lazily."
+            )
+    else:
+        invalidate_cache()
+
+    result: dict = {"ok": True, "updated": list(updates.keys())}
+    if reembed_warning:
+        result["warning"] = reembed_warning
+    return result
+
+
+def _resolve_embed_model_after_update() -> str:
+    """embed_model() reads the cached config — flush then re-read."""
+    from .ai_settings import embed_model, invalidate_cache
+
     invalidate_cache()
-    return {"ok": True, "updated": list(updates.keys())}
+    return embed_model()
+
+
+async def _clear_all_embeddings() -> int:
+    """Null every stored embedding (chunk vectors + ticket title vectors)."""
+    conn = await _get_db()
+    try:
+        async with conn.transaction():
+            n1 = await conn.execute("UPDATE app.chunks SET embedding_vec = NULL")
+            n2 = await conn.execute("UPDATE app.tickets SET title_embedding = NULL")
+        # asyncpg execute returns status like 'UPDATE 5'
+        count = 0
+        for status in (n1, n2):
+            try:
+                count += int(status.split()[-1])
+            except (ValueError, IndexError):
+                pass
+        return count
+    finally:
+        await conn.close()

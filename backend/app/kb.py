@@ -60,9 +60,16 @@ async def ingest(
     if not file and not raw_text:
         raise HTTPException(400, "Provide a file or raw_text")
 
-    # 1) Read & normalize
+    MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+
+    # 1) Read & normalize (size-capped — unbounded reads are a DoS vector)
     if file:
-        raw = await file.read()
+        raw = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413,
+                f"File too large — max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
+            )
         detected_mime, text = sniff_and_read(
             file.content_type or "", file.filename or "", raw
         )
@@ -75,6 +82,11 @@ async def ingest(
         source = "raw"
         title = filename or "Raw text input"
         size_bytes = len(text.encode("utf-8"))
+        if size_bytes > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413,
+                f"Text too large — max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
+            )
 
     text = normalize_text(text)
     if not text:

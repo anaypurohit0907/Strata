@@ -109,24 +109,28 @@ def _sign_es256_token(
 
 
 class TestVerifySupabaseJWTHS256:
-    def test_valid_hs256_token_returns_payload(self):
+    @pytest.mark.asyncio
+    async def test_valid_hs256_token_returns_payload(self):
         token = make_jwt()
-        payload = verify_supabase_jwt(token)
+        payload = await verify_supabase_jwt(token)
         assert payload["sub"] == TEST_USER_ID
         assert payload["email"] == "test@ticketpilot.dev"
         assert payload["role"] == "admin"
 
-    def test_expired_token_raises(self):
+    @pytest.mark.asyncio
+    async def test_expired_token_raises(self):
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt(make_expired_jwt())
+            await verify_supabase_jwt(make_expired_jwt())
         assert exc.value.status_code == 401
 
-    def test_invalid_signature_raises(self):
+    @pytest.mark.asyncio
+    async def test_invalid_signature_raises(self):
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt(make_invalid_sig_jwt())
+            await verify_supabase_jwt(make_invalid_sig_jwt())
         assert exc.value.status_code == 401
 
-    def test_wrong_algorithm_raises(self):
+    @pytest.mark.asyncio
+    async def test_wrong_algorithm_raises(self):
         """An algorithm the code doesn't recognize (RS256) is rejected."""
         payload = {
             "sub": TEST_USER_ID,
@@ -144,10 +148,11 @@ class TestVerifySupabaseJWTHS256:
         ).rstrip(b"=").decode()
         bad_token = f"{bad_header}.{payload_b64}.{sig}"
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt(bad_token)
+            await verify_supabase_jwt(bad_token)
         assert exc.value.status_code == 401
 
-    def test_missing_sub_claim_raises(self):
+    @pytest.mark.asyncio
+    async def test_missing_sub_claim_raises(self):
         payload = {
             "email": "x@y.z",
             "iss": "https://test-project.supabase.co/auth/v1",
@@ -156,10 +161,11 @@ class TestVerifySupabaseJWTHS256:
         }
         token = jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt(token)
+            await verify_supabase_jwt(token)
         assert exc.value.status_code == 401
 
-    def test_wrong_issuer_raises(self):
+    @pytest.mark.asyncio
+    async def test_wrong_issuer_raises(self):
         payload = {
             "sub": TEST_USER_ID,
             "iss": "https://evil-issuer.example.com",
@@ -168,17 +174,19 @@ class TestVerifySupabaseJWTHS256:
         }
         token = jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt(token)
+            await verify_supabase_jwt(token)
         assert exc.value.status_code == 401
 
-    def test_malformed_token_raises(self):
+    @pytest.mark.asyncio
+    async def test_malformed_token_raises(self):
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt("not-a-jwt")
+            await verify_supabase_jwt("not-a-jwt")
         assert exc.value.status_code == 401
 
-    def test_empty_string_raises(self):
+    @pytest.mark.asyncio
+    async def test_empty_string_raises(self):
         with pytest.raises(HTTPException) as exc:
-            verify_supabase_jwt("")
+            await verify_supabase_jwt("")
         assert exc.value.status_code == 401
 
 
@@ -188,24 +196,26 @@ class TestVerifySupabaseJWTHS256:
 
 
 class TestVerifySupabaseJWTES256:
-    def test_valid_es256_token_returns_payload(self):
+    @pytest.mark.asyncio
+    async def test_valid_es256_token_returns_payload(self):
         private_key, jwk = _ec_keypair_and_jwk(kid="key-1")
         token = _sign_es256_token(private_key, kid="key-1")
 
-        with patch("app.auth._fetch_jwks", return_value=[jwk]):
-            payload = verify_supabase_jwt(token)
+        with patch("app.auth._fetch_jwks", new_callable=AsyncMock, return_value=[jwk]):
+            payload = await verify_supabase_jwt(token)
         assert payload["sub"] == TEST_USER_ID
         assert payload["iss"].startswith("https://test-project.supabase.co")
 
-    def test_es256_no_matching_jwks_key_raises(self):
+    @pytest.mark.asyncio
+    async def test_es256_no_matching_jwks_key_raises(self):
         private_key, _jwk = _ec_keypair_and_jwk(kid="key-1")
         token = _sign_es256_token(private_key, kid="key-1")
 
         # JWKS returns a DIFFERENT kid — no match
         _, other_jwk = _ec_keypair_and_jwk(kid="key-2")
-        with patch("app.auth._fetch_jwks", return_value=[other_jwk]):
+        with patch("app.auth._fetch_jwks", new_callable=AsyncMock, return_value=[other_jwk]):
             with pytest.raises(HTTPException) as exc:
-                verify_supabase_jwt(token)
+                await verify_supabase_jwt(token)
         assert exc.value.status_code == 401
 
 
@@ -303,33 +313,38 @@ class TestOrgMiddlewareExtractUserId:
     def setup_method(self):
         self.middleware = OrganizationContextMiddleware(app=lambda scope: None)
 
-    def test_valid_hs256_token_extracts_sub(self):
+    @pytest.mark.asyncio
+    async def test_valid_hs256_token_extracts_sub(self):
         token = make_jwt()
         request = _build_request(auth_header=f"Bearer {token}")
-        user_id = self.middleware._extract_user_id_from_token(request)
+        user_id = await self.middleware._extract_user_id_from_token(request)
         assert user_id == TEST_USER_ID
 
-    def test_invalid_signature_returns_none(self):
+    @pytest.mark.asyncio
+    async def test_invalid_signature_returns_none(self):
         request = _build_request(
             auth_header=f"Bearer {make_invalid_sig_jwt()}"
         )
-        assert self.middleware._extract_user_id_from_token(request) is None
+        assert await self.middleware._extract_user_id_from_token(request) is None
 
-    def test_missing_authorization_returns_none(self):
+    @pytest.mark.asyncio
+    async def test_missing_authorization_returns_none(self):
         request = _build_request()
-        assert self.middleware._extract_user_id_from_token(request) is None
+        assert await self.middleware._extract_user_id_from_token(request) is None
 
-    def test_non_bearer_returns_none(self):
+    @pytest.mark.asyncio
+    async def test_non_bearer_returns_none(self):
         request = _build_request(auth_header="Basic abc")
-        assert self.middleware._extract_user_id_from_token(request) is None
+        assert await self.middleware._extract_user_id_from_token(request) is None
 
-    def test_es256_token_extracts_sub(self):
+    @pytest.mark.asyncio
+    async def test_es256_token_extracts_sub(self):
         private_key, jwk = _ec_keypair_and_jwk(kid="k1")
         token = _sign_es256_token(private_key, kid="k1")
         request = _build_request(auth_header=f"Bearer {token}")
 
-        with patch("app.auth._fetch_jwks", return_value=[jwk]):
-            user_id = self.middleware._extract_user_id_from_token(request)
+        with patch("app.auth._fetch_jwks", new_callable=AsyncMock, return_value=[jwk]):
+            user_id = await self.middleware._extract_user_id_from_token(request)
         assert user_id == TEST_USER_ID
 
 

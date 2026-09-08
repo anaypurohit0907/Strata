@@ -22,9 +22,9 @@ ALTER TABLE app.tickets
     ALTER COLUMN title_embedding TYPE vector(1536);
 
 -- 4. Recreate HNSW indexes (same params as before)
-CREATE INDEX idx_chunks_embedding_vec
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_vec
     ON app.chunks USING hnsw (embedding_vec vector_cosine_ops)
     WITH (m='16', ef_construction='64');
-CREATE INDEX idx_tickets_title_embedding
+CREATE INDEX IF NOT EXISTS idx_tickets_title_embedding
     ON app.tickets USING hnsw (title_embedding vector_cosine_ops)
     WITH (m='16', ef_construction='64');

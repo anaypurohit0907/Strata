@@ -1046,21 +1046,23 @@ def chat_with_ai(
 
     # 1) Verify ticket exists and user has access
     with get_db_connection() as conn:
-        cursor = conn.cursor()
+        with conn.cursor() as cursor:
+            # Check ticket access (same rules as viewing ticket)
+            if is_rep_in_org(user, request):
+                cursor.execute(
+                    "SELECT id FROM app.tickets WHERE id = %s AND organization_id = %s",
+                    (ticket_id, org_id),
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM app.tickets WHERE id = %s AND created_by = %s AND organization_id = %s",
+                    (ticket_id, user.id, org_id),
+                )
+            # fetch INSIDE the block — after __exit__ the connection is
+            # back in the pool and the cursor may read another request's data
+            access_row = cursor.fetchone()
 
-        # Check ticket access (same rules as viewing ticket)
-        if is_rep_in_org(user, request):
-            cursor.execute(
-                "SELECT id FROM app.tickets WHERE id = %s AND organization_id = %s",
-                (ticket_id, org_id),
-            )
-        else:
-            cursor.execute(
-                "SELECT id FROM app.tickets WHERE id = %s AND created_by = %s AND organization_id = %s",
-                (ticket_id, user.id, org_id),
-            )
-
-    if not cursor.fetchone():
+    if not access_row:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     # 1b) Fetch conversation context: ticket summary + prior messages.

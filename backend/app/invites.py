@@ -399,9 +399,11 @@ def accept_invite(token: str, user: User = Depends(get_current_user)):
             (org_id, user.id, role, invite["id"]),
         )
 
-        # --- Upsert global user_roles (rep / admin / customer) ----------
-        # Map org role → global role: admin→admin, rep→rep, member→customer
-        global_role_map = {"admin": "admin", "rep": "rep", "member": "customer"}
+        # --- Upsert global user_roles (rep / customer) -------------------
+        # Global 'admin' = PLATFORM admin (cross-org) — NEVER granted via
+        # org invites. Org role lives in app.organization_members; global
+        # 'rep' here only serves as the no-org-context fallback.
+        global_role_map = {"admin": "rep", "rep": "rep", "member": "customer"}
         global_role = global_role_map.get(role, "customer")
 
         cursor.execute(

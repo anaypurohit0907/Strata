@@ -93,26 +93,44 @@ class AuthContextResponse(BaseModel):
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _fetch_jwks() -> list[dict]:
-    """Fetch and cache Supabase Auth JWKS public keys for ES256 verification."""
-    global _jwks_cache
+_jwks_fetch_lock: "asyncio.Lock | None" = None
+
+
+async def _fetch_jwks() -> list[dict]:
+    """Fetch and cache Supabase Auth JWKS public keys for ES256 verification.
+
+    Async — the sync httpx.get version stalled the event loop up to 10s
+    per cache miss. Serves stale keys forever on failure (stale public
+    keys are safe to verify against; worst case a rotated key 401s until
+    the fetch succeeds).
+    """
+    global _jwks_cache, _jwks_fetch_lock
     now = time.monotonic()
     if _jwks_cache and (now - _jwks_cache[1]) < _JWKS_TTL:
         return _jwks_cache[0]
 
-    try:
-        resp = httpx.get(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json", timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        keys = data.get("keys", [])
-        _jwks_cache = (keys, now)
-        logger.info("Fetched %d JWKS keys from Supabase", len(keys))
-        return keys
-    except Exception as exc:
-        logger.warning("JWKS fetch failed: %s — returning stale cache", exc)
-        if _jwks_cache:
+    if _jwks_fetch_lock is None:
+        _jwks_fetch_lock = asyncio.Lock()
+    async with _jwks_fetch_lock:
+        # Double-check inside the lock — N concurrent misses → 1 fetch
+        now = time.monotonic()
+        if _jwks_cache and (now - _jwks_cache[1]) < _JWKS_TTL:
             return _jwks_cache[0]
-        return []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+                )
+                resp.raise_for_status()
+                keys = resp.json().get("keys", [])
+                _jwks_cache = (keys, now)
+                logger.info("Fetched %d JWKS keys from Supabase", len(keys))
+                return keys
+        except Exception as exc:
+            logger.warning("JWKS fetch failed: %s — serving stale cache", exc)
+            if _jwks_cache:
+                return _jwks_cache[0]
+            return []
 
 
 def _build_ec_key(jwk: dict):
@@ -125,7 +143,7 @@ def _build_ec_key(jwk: dict):
     return ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), encoded_point)
 
 
-def verify_supabase_jwt(token: str) -> dict:
+async def verify_supabase_jwt(token: str) -> dict:
     """Verify Supabase JWT — supports both ES256 (modern) and HS256 (legacy)."""
     # Peek at the algorithm to decide verification method
     try:
@@ -138,7 +156,7 @@ def verify_supabase_jwt(token: str) -> dict:
     try:
         if alg == "ES256":
             # Modern Supabase: ES256 signed, verify with public key from JWKS
-            keys = _fetch_jwks()
+            keys = await _fetch_jwks()
             matching = [k for k in keys if k.get("kid") == kid]
             if not matching:
                 logger.warning("No matching JWKS key for kid=%s", kid)
@@ -202,7 +220,7 @@ async def get_current_user(request: Request) -> User:
         )
 
     token = auth.split(" ", 1)[1]
-    payload = verify_supabase_jwt(token)
+    payload = await verify_supabase_jwt(token)
 
     user_id = payload.get("sub")
     email = payload.get("email")
@@ -342,11 +360,9 @@ async def auto_create_organization_for_new_user(user_id: str, user_email: str) -
         await conn.execute(
             """
             INSERT INTO app.user_roles (user_id, role)
-            VALUES ($1, 'admin')
-            ON CONFLICT (user_id) DO UPDATE
-              SET role = 'admin'
-              WHERE app.user_roles.role = 'customer'
-        """,
+            VALUES ($1, 'customer')
+            ON CONFLICT (user_id) DO NOTHING
+            """,
             user_uuid,
         )
 

@@ -67,7 +67,7 @@ Integration test (both servers running): `python scripts/rag_validation_suite.py
 
 ## Architecture quirks
 - Two DB pools: asyncpg `db.py` (async) + psycopg3 `db_sync.py` (sync)
-- Two role systems: global `app.user_roles` (admin/rep/customer) + per-org `app.organization_members` (owner/admin/rep/member)
+- Two role systems: global `app.user_roles` (admin/rep/customer) + per-org `app.organization_members` (owner/admin/rep/member). **Global `admin` = PLATFORM admin (cross-org `/api/admin/*` access) — granted ONLY manually via SQL (README:136); self-signup gets `customer`, org invites grant at most global `rep`.**
 - FAISS index per org on ephemeral filesystem — **wiped on every deploy**, re-upload KB docs
 - Org context via `X-Organization-ID` header, processed in `org_middleware.py`; org-scoped routers call `require_org_context`
 - DB pool circuit breaker: opens after **3** consecutive failures → 30s cooldown → half-open retry (fast-fail so callers can serve stale cache)
