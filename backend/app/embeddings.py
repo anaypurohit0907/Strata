@@ -11,7 +11,7 @@ from typing import List
 
 import httpx
 
-from .ai_settings import embed_api_key
+from .ai_settings import embed_api_key, gen_api_key
 from .ai_settings import embed_dim as _embed_dim
 from .ai_settings import embed_model
 
@@ -45,8 +45,9 @@ def _get_api_key(provider: str) -> str:
     key = embed_api_key()
     if key:
         return key
-    if provider == "google":
-        key = embed_api_key()
+    # Embedding key blank → fall back to the generation key (BYOK users
+    # typically paste one key; UI copy promises this behavior)
+    key = gen_api_key()
     if key:
         return key
     raise RuntimeError(

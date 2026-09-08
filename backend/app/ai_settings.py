@@ -57,7 +57,7 @@ def _resolve(key: str, env_fallback: str | None = None, default: Any = "") -> An
 
 
 def gen_model() -> str:
-    return _resolve("gen_model", "GENAI_MODEL", "gemini-2.0-flash")
+    return _resolve("gen_model", "GENAI_MODEL", "gemini-3.5-flash")
 
 
 def gen_api_key() -> str:
