@@ -1435,13 +1435,29 @@ async def update_ai_settings(body: dict, user: User = Depends(get_current_user))
         "embed_model",
         "embed_api_key",
         # embed_dim intentionally NOT settable via API: it must match the
-        # vector(768) column in app.chunks — a wrong value 500s every KB
+        # vector(1536) column in app.chunks — a wrong value 500s every KB
         # ingest. Auto-detected from the model; env EMBEDDING_DIM override
         # still works for infra changes.
     }
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(400, "No valid fields provided")
+
+    # Validate embedding model dimension against the DB column. A mismatch
+    # 500s every KB ingest and poisons similarity search.
+    if "embed_model" in updates:
+        from .ai_settings import embed_dim_for_model
+
+        detected = embed_dim_for_model(updates["embed_model"])
+        if detected != 1536:
+            raise HTTPException(
+                400,
+                f"Embedding model '{updates['embed_model']}' produces "
+                f"{detected}-dim vectors but the database column is "
+                f"vector(1536). Use a 1536-dim model (e.g. "
+                f"gemini-embedding-001, text-embedding-3-small) — switching "
+                f"dimensions requires a migration + full KB re-embed.",
+            )
 
     conn = await _get_db()
     try:

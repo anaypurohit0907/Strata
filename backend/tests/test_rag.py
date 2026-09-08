@@ -30,7 +30,7 @@ from tests.conftest import TEST_ORG_ID
 
 
 def _vec(q: str):
-    return [0.1] * 768
+    return [0.1] * 1536
 
 
 class ScriptedCursor:
@@ -86,7 +86,7 @@ def _chunk_row(cid: str, text: str, title: str = "Doc"):
         "text": text,
         "faiss_id": None,
         "title": title,
-        "embedding_array": [0.1] * 768,
+        "embedding_array": [0.1] * 1536,
     }
 
 
@@ -227,7 +227,7 @@ class TestSimilarTickets:
 
         with patch("app.db_sync.get_db_connection", return_value=conn):
             results = search_similar_tickets(
-                TEST_ORG_ID, "wifi not working", [0.1] * 768, k=3
+                TEST_ORG_ID, "wifi not working", [0.1] * 1536, k=3
             )
 
         ids = [t["id"] for t in results]
@@ -240,7 +240,7 @@ class TestSimilarTickets:
         conn = ScriptedConn(cursor)
 
         with patch("app.db_sync.get_db_connection", return_value=conn):
-            results = search_similar_tickets(TEST_ORG_ID, "nothing", [0.1] * 768)
+            results = search_similar_tickets(TEST_ORG_ID, "nothing", [0.1] * 1536)
 
         assert results == []
 
