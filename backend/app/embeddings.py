@@ -49,7 +49,10 @@ def _get_api_key(provider: str) -> str:
         key = embed_api_key()
     if key:
         return key
-    raise RuntimeError(f"No API key for {provider}. Configure it in Settings → AI.")
+    raise RuntimeError(
+        "No embedding API key configured. Add one in Settings → AI "
+        "(works with any supported provider: Gemini, OpenAI-compatible, Jina)."
+    )
 
 
 # ── Google Gemini Embedding API ──────────────────────────────
