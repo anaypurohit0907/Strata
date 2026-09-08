@@ -79,6 +79,7 @@ class UserOrganization(BaseModel):
     your_role: str
     is_default: bool = False
     settings: dict = {}
+    plan_id: str = "community"
 
 
 class AuthContextResponse(BaseModel):
@@ -246,6 +247,7 @@ async def get_user_organizations(user_id: str) -> List[UserOrganization]:
                     o.name,
                     o.slug,
                     o.settings,
+                    o.plan_id,
                     om.role as your_role
                 FROM app.organizations o
                 JOIN app.organization_members om ON o.id = om.organization_id
@@ -269,6 +271,7 @@ async def get_user_organizations(user_id: str) -> List[UserOrganization]:
                     if isinstance(row["settings"], str)
                     else (row["settings"] or {})
                 ),
+                plan_id=row["plan_id"] or "community",
             )
             for i, row in enumerate(rows)
         ]
