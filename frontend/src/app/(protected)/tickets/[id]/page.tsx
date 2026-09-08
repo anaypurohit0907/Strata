@@ -43,6 +43,33 @@ import { supabase } from '@/lib/supabaseClient';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+type TicketStatus =
+  | 'open'
+  | 'in_progress'
+  | 'resolved'
+  | 'closed'
+  | 'escalated';
+
+interface Citation {
+  label: string;
+  doc_id: string;
+  chunk_id: string;
+  faiss_id: number;
+  score?: number;
+}
+
+interface MessageMeta {
+  confidence?: number;
+  suggest_escalation?: boolean;
+  citations?: Citation[];
+}
+
+interface CurrentUser {
+  id: string;
+  email?: string;
+  role?: string;
+}
+
 interface MessageOut {
   id: string;
   ticket_id: string;
@@ -51,7 +78,7 @@ interface MessageOut {
   body: string;
   created_at: string;
   is_internal: boolean;
-  meta?: any;
+  meta?: MessageMeta;
 }
 
 interface TicketDetail {
@@ -86,14 +113,6 @@ interface TicketDetail {
 interface TicketWithMessages {
   ticket: TicketDetail;
   messages: MessageOut[];
-}
-
-interface Citation {
-  label: string;
-  doc_id: string;
-  chunk_id: string;
-  faiss_id: number;
-  score?: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -266,7 +285,7 @@ export default function TicketDetailPage({
   const [ticketData, setTicketData] = useState<TicketWithMessages | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   // Message composer
   const [newMessage, setNewMessage] = useState('');
@@ -336,7 +355,7 @@ export default function TicketDetailPage({
   useEffect(() => {
     const getUser = async () => {
       try {
-        const u = await api.get('/api/me');
+        const u = await api.get<CurrentUser>('/api/me');
         setCurrentUser(u);
       } catch {
         /* ignore */
@@ -502,8 +521,10 @@ export default function TicketDetailPage({
       toast.success('Ticket resolved');
       setResolveOpen(false);
       await loadTicket();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to resolve ticket');
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to resolve ticket'
+      );
     } finally {
       setResolving(false);
     }
@@ -613,7 +634,7 @@ export default function TicketDetailPage({
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <StatusBadge status={ticket.status as any} />
+            <StatusBadge status={ticket.status as TicketStatus} />
             {ticket.is_overdue && (
               <Badge variant="destructive" className="text-xs">
                 OVERDUE
@@ -912,7 +933,7 @@ export default function TicketDetailPage({
 
                       {/* AI citations */}
                       {message.sender_role === 'ai' &&
-                        message.meta?.citations?.length > 0 && (
+                        !!message.meta?.citations?.length && (
                           <div className="mt-2">
                             {showCitationTip && (
                               <motion.div
@@ -1118,7 +1139,7 @@ export default function TicketDetailPage({
             <CardContent className="space-y-3 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Status</span>
-                <StatusBadge status={ticket.status as any} />
+                <StatusBadge status={ticket.status as TicketStatus} />
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Priority</span>

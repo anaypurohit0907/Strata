@@ -52,6 +52,14 @@ interface UserStats {
   recent_signups: number;
 }
 
+interface AuditItem {
+  id?: string;
+  actor_id?: string;
+  actor_email?: string;
+  action?: string;
+  created_at?: string;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
 
 export default function AdminRolesPage() {
@@ -243,7 +251,7 @@ export default function AdminRolesPage() {
       }
 
       const data = await response.json();
-      const items: any[] = data.items || [];
+      const items: AuditItem[] = data.items || [];
 
       const activities: UserActivity[] = items.map(item => ({
         id: item.id || String(Math.random()),

@@ -36,6 +36,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { RepActionBar } from '@/components/ui/RepActionBar';
 import { AIMessage } from '@/components/ui/AIMessage';
 import { AIResponseModal } from '@/components/rep/AIResponseModal';
+import type { AIResponse } from '@/components/rep/AIResponseModal';
 import { KBIngestModal } from '@/components/ui/KBIngestModal';
 import { RepQueueSkeleton } from '@/components/skeletons/RepQueueSkeleton';
 import { buildAISuggestionQuery, prepareTicketContext } from '@/lib/ai/prompt';
@@ -90,6 +91,32 @@ interface QueueCounts {
   escalated: number;
   all: number;
   resolved_today: number;
+}
+
+interface AISuggestionResponse extends AIResponse {
+  message_id?: string;
+}
+
+interface RepActionPayload {
+  status?: string;
+  priority?: string;
+  reason?: string | null;
+  escalated_to_user_id?: string | null;
+  expected_resolve_at?: string;
+}
+
+interface KBIngestSource {
+  type: string;
+  name?: string;
+  content?: string;
+  url?: string;
+  file?: File;
+}
+
+interface KBDraft {
+  ticket_id: string;
+  title: string;
+  content: string;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
@@ -169,7 +196,9 @@ export default function RepConsolePage() {
 
   // AI-related state
   const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiResponse, setAiResponse] = useState<any>(null);
+  const [aiResponse, setAiResponse] = useState<AISuggestionResponse | null>(
+    null
+  );
   const [aiCooldowns, setAiCooldowns] = useState<Record<string, number>>({});
   const [currentAiTicket, setCurrentAiTicket] = useState<string | null>(null);
 
@@ -274,7 +303,10 @@ export default function RepConsolePage() {
       if (searchQuery) params.append('q', searchQuery);
       if (mineOnly) params.append('mine', 'true');
 
-      const data = await api.get(`/api/rep/queue?${params}`, orgId);
+      const data = await api.get<{ items: QueueItem[]; total: number }>(
+        `/api/rep/queue?${params}`,
+        orgId
+      );
       setTickets(data.items);
       setTotal(data.total);
     } catch (error) {
@@ -293,7 +325,7 @@ export default function RepConsolePage() {
     try {
       if (!silent) setCountsLoading(true);
 
-      const data = await api.get(`/api/rep/counts`, orgId);
+      const data = await api.get<QueueCounts>(`/api/rep/counts`, orgId);
       setCounts(data);
     } catch (error) {
       console.error('Failed to load counts:', error);
@@ -446,11 +478,14 @@ export default function RepConsolePage() {
 
       // Fetch detailed ticket information including messages
       let ticketDetails = ticket;
-      let messages: any[] = [];
+      let messages: Record<string, unknown>[] = [];
 
       try {
         // Get full ticket details
-        ticketDetails = await api.get(`/api/tickets/${ticket.id}`, orgId);
+        ticketDetails = await api.get<QueueItem>(
+          `/api/tickets/${ticket.id}`,
+          orgId
+        );
 
         // Get recent messages (last 5)
         const messagesResponse = await api.get(
@@ -480,7 +515,7 @@ export default function RepConsolePage() {
       }
 
       // Make AI request using api client
-      const aiResponseData = await api.post(
+      const aiResponseData = await api.post<AISuggestionResponse>(
         `/api/tickets/${ticket.id}/chat`,
         {
           query: query,
@@ -494,11 +529,13 @@ export default function RepConsolePage() {
       setAiResponse(aiResponseData);
       setCurrentAiTicket(ticket.id);
       setAiModalOpen(true);
-    } catch (error: any) {
+    } catch (error) {
       console.error('AI suggestion failed:', error);
+      const message =
+        error instanceof Error ? error.message : String(error ?? '');
 
       // Handle rate limiting
-      if (error.message && error.message.includes('429')) {
+      if (message.includes('429')) {
         const cooldownSeconds = 8;
         setAiCooldowns(prev => ({
           ...prev,
@@ -507,12 +544,12 @@ export default function RepConsolePage() {
         toast.error(`Rate limited. Please wait ${cooldownSeconds} seconds.`, {
           id: 'ai-' + ticket.id,
         });
-      } else if (error.message && error.message.includes('401')) {
+      } else if (message.includes('401')) {
         toast.error('Authentication required. Please log in again.', {
           id: 'ai-' + ticket.id,
         });
         router.push('/login');
-      } else if (error.message && error.message.includes('404')) {
+      } else if (message.includes('404')) {
         toast.error('Ticket not found', { id: 'ai-' + ticket.id });
       } else if (
         error instanceof TypeError &&
@@ -522,7 +559,7 @@ export default function RepConsolePage() {
           id: 'ai-' + ticket.id,
         });
       } else {
-        toast.error(`AI request failed: ${error.message || 'Unknown error'}`, {
+        toast.error(`AI request failed: ${message || 'Unknown error'}`, {
           id: 'ai-' + ticket.id,
         });
       }
@@ -637,7 +674,7 @@ export default function RepConsolePage() {
   const performAction = async (
     ticketId: string,
     action: string,
-    payload: any = {}
+    payload: RepActionPayload = {}
   ) => {
     if (!orgId) {
       toast.error('Organization context not loaded', {
@@ -770,7 +807,7 @@ export default function RepConsolePage() {
     performAction(ticketId, 'priority', { priority });
   };
 
-  const handleKBIngest = async (sources: any[]) => {
+  const handleKBIngest = async (sources: KBIngestSource[]) => {
     if (!orgId) {
       setShowKBModal(false);
       return;
@@ -826,27 +863,23 @@ export default function RepConsolePage() {
   const [kbDraftOpen, setKbDraftOpen] = useState(false);
   const [kbDraftLoading, setKbDraftLoading] = useState(false);
   const [kbDraftSaving, setKbDraftSaving] = useState(false);
-  const [kbDraft, setKbDraft] = useState<{
-    ticket_id: string;
-    title: string;
-    content: string;
-  } | null>(null);
+  const [kbDraft, setKbDraft] = useState<KBDraft | null>(null);
 
-  const handleKBDraft = async (ticket: any) => {
+  const handleKBDraft = async (ticket: QueueItem) => {
     if (!orgId) return;
     setKbDraftLoading(true);
     setKbDraft(null);
     setKbDraftOpen(true);
     try {
-      const draft = await api.post(
+      const draft = await api.post<KBDraft>(
         `/api/tickets/${ticket.id}/ai-kb-draft`,
         {},
         orgId
       );
       setKbDraft(draft);
-    } catch (error: any) {
+    } catch (error) {
       const msg =
-        error?.message?.includes('402')
+        error instanceof Error && error.message.includes('402')
           ? 'AI features require Starter plan or above'
           : 'Failed to generate KB draft';
       toast.error(msg);
@@ -1000,8 +1033,10 @@ export default function RepConsolePage() {
         )
       );
       await loadCounts(true);
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to accept ticket');
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Failed to accept ticket'
+      );
     } finally {
       setActionLoading(null);
     }

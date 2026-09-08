@@ -64,7 +64,9 @@ export default function MyTicketsPage() {
       });
       if (search) params.set('q', search);
       // my-tickets is cross-org — pass no org header (api client omits it when undefined)
-      const data = await api.get(`/api/rep/my-tickets?${params}`);
+      const data = await api.get<{ items: MyTicket[]; total: number }>(
+        `/api/rep/my-tickets?${params}`
+      );
       setTickets(data.items);
       setTotal(data.total);
     } catch (e) {

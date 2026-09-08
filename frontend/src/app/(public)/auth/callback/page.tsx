@@ -91,7 +91,7 @@ export default function AuthCallbackPage() {
 
         // No auth callback detected
         setTimeout(() => router.replace('/login'), 1000);
-      } catch (err) {
+      } catch {
         setError('An unexpected error occurred');
         setLoading(false);
       }

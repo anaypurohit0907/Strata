@@ -351,7 +351,7 @@ function Step2({
         return;
       }
       setDone(true);
-    } catch (e) {
+    } catch {
       setError('Upload failed — AI keys may not be configured yet.');
     } finally {
       setUploading(false);

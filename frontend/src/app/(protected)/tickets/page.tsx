@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, type Column } from '@/components/ui/DataTable';
 import { MobileTicketCard } from '@/components/ui/mobile-ticket-card';
 import {
   Card,
@@ -99,7 +99,7 @@ const P_LEVEL_COLORS = [
   'bg-slate-400 text-white', // P7
 ];
 
-const columns = [
+const columns: Column<TicketSummary>[] = [
   {
     id: 'title',
     accessorKey: 'title',
@@ -863,7 +863,7 @@ function TicketsPageInner() {
                       </p>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      The ticket will be owned by this customer and they'll
+                      The ticket will be owned by this customer and they&apos;ll
                       receive an email notification.
                     </p>
                   </div>

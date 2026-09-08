@@ -39,14 +39,45 @@ import {
   Brain,
 } from 'lucide-react';
 
+interface AdminUser {
+  role: string;
+}
+
+interface OrgSettings {
+  overdue_threshold_hours?: number;
+  overdue_reminder_hours?: number;
+  default_etr_hours?: number;
+  auto_assign_on_create?: boolean;
+  attention_thresholds?: Record<number, number>;
+}
+
+interface OrgDetail {
+  settings?: OrgSettings;
+}
+
+interface RepWorkload {
+  user_id: string;
+  email: string;
+  open_tickets: number;
+  role?: string;
+}
+
+interface DiagnosticsData {
+  database_version: string;
+  timestamp: string;
+  table_counts: Record<string, number>;
+  extensions?: string[];
+}
+
 export default function AdminSettingsPage() {
   const router = useRouter();
   const { currentOrganization } = useOrganization();
   const orgId = currentOrganization?.id;
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<AdminUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
-  const [diagnosticsData, setDiagnosticsData] = useState<any>(null);
+  const [diagnosticsData, setDiagnosticsData] =
+    useState<DiagnosticsData | null>(null);
   const [settings, setSettings] = useState({
     siteTitle: 'TicketPilot',
     siteDomain: 'localhost:3000',
@@ -100,9 +131,7 @@ export default function AdminSettingsPage() {
   const [autoAssignSaving, setAutoAssignSaving] = useState(false);
 
   // Rep workload + bulk auto-assign
-  const [workload, setWorkload] = useState<
-    { user_id: string; email: string; open_tickets: number }[]
-  >([]);
+  const [workload, setWorkload] = useState<RepWorkload[]>([]);
   const [totalUnassigned, setTotalUnassigned] = useState(0);
   const [bulkAssigning, setBulkAssigning] = useState(false);
 
@@ -110,8 +139,8 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     if (!orgId || !user) return;
     api
-      .get(`/api/organizations/${orgId}`, orgId)
-      .then((data: any) => {
+      .get<OrgDetail>(`/api/organizations/${orgId}`, orgId)
+      .then(data => {
         const s = data.settings || {};
         setOverdueSettings({
           overdue_threshold_hours: String(s.overdue_threshold_hours ?? 48),
@@ -134,10 +163,10 @@ export default function AdminSettingsPage() {
 
     // Load rep workload
     api
-      .get<{
-        reps: { user_id: string; email: string; open_tickets: number }[];
-        total_unassigned: number;
-      }>('/api/rep/workload', orgId)
+      .get<{ reps: RepWorkload[]; total_unassigned: number }>(
+        '/api/rep/workload',
+        orgId
+      )
       .then(d => {
         setWorkload(d.reps);
         setTotalUnassigned(d.total_unassigned);
@@ -147,7 +176,10 @@ export default function AdminSettingsPage() {
 
   // Merge-safe patch helper — fetches current settings before saving
   const patchOrgSettings = async (patch: Record<string, unknown>) => {
-    const current: any = await api.get(`/api/organizations/${orgId}`, orgId);
+    const current = await api.get<OrgDetail>(
+      `/api/organizations/${orgId}`,
+      orgId
+    );
     await api.patch(
       `/api/organizations/${orgId}`,
       {
@@ -227,10 +259,10 @@ export default function AdminSettingsPage() {
       }
       // Refresh workload
       api
-        .get<{
-          reps: { user_id: string; email: string; open_tickets: number }[];
-          total_unassigned: number;
-        }>('/api/rep/workload', orgId)
+        .get<{ reps: RepWorkload[]; total_unassigned: number }>(
+          '/api/rep/workload',
+          orgId
+        )
         .then(d => {
           setWorkload(d.reps);
           setTotalUnassigned(d.total_unassigned);
@@ -274,7 +306,7 @@ export default function AdminSettingsPage() {
         });
 
         if (response.ok) {
-          const userData = await response.json();
+          const userData: AdminUser = await response.json();
           if (userData.role !== 'admin') {
             router.push('/dashboard');
             return;
@@ -370,7 +402,7 @@ export default function AdminSettingsPage() {
         <div className="text-center">
           <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
           <p className="text-muted-foreground">
-            You don't have permission to access this page.
+            You don&apos;t have permission to access this page.
           </p>
         </div>
       </div>
@@ -544,8 +576,8 @@ export default function AdminSettingsPage() {
           </CardTitle>
           <CardDescription>
             How long a ticket at each priority level can sit open before it is
-            auto-flagged as "Needs Attention". Priority 1 is lowest urgency, 7
-            is most critical.
+            auto-flagged as &quot;Needs Attention&quot;. Priority 1 is lowest
+            urgency, 7 is most critical.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -758,7 +790,7 @@ export default function AdminSettingsPage() {
                       >
                         <td className="px-3 py-2 font-medium">{r.email}</td>
                         <td className="px-3 py-2 text-muted-foreground capitalize">
-                          {(r as any).role}
+                          {r.role}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <span
