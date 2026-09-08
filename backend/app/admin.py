@@ -1298,8 +1298,11 @@ def log_audit_sync(
 ) -> None:
     """Sync wrapper — use from non-async routes (tickets, kb, invites)."""
     import asyncio
+
     try:
-        asyncio.run(log_audit(action, actor, resource_type, resource_id, org_id, metadata))
+        asyncio.run(
+            log_audit(action, actor, resource_type, resource_id, org_id, metadata)
+        )
     except Exception:
         pass
 

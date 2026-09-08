@@ -6,6 +6,7 @@ Settings resolved from DB (via ai_settings.py) first, env vars as fallback.
 import hashlib
 import json
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,8 +17,15 @@ from .ai_settings import gen_api_base, gen_api_key, gen_model, max_tokens, tempe
 
 logger = logging.getLogger(__name__)
 
-MAX_RETRY_ATTEMPTS = 3
+MAX_RETRY_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2.0
+RETRY_DELAY_429_SECONDS = 8.0
+# Total wall-clock budget for structured + fallback generation. A provider
+# outage must not hold a worker thread for minutes — chat runs on a
+# bounded threadpool, so slow LLM ladders serialize all traffic.
+AI_GENERATION_DEADLINE_SECONDS = float(
+    os.getenv("AI_GENERATION_DEADLINE_SECONDS", "45")
+)
 
 
 class Citation(BaseModel):
@@ -90,7 +98,7 @@ def _detect_provider(model: str) -> str:
     return "openai_compat"
 
 
-def _call_llm(prompt: str, json_mode: bool = True) -> str:
+def _call_llm(prompt: str, json_mode: bool = True, timeout_s: float = 30.0) -> str:
     model = gen_model()
     provider = _detect_provider(model)
     temp = temperature()
@@ -109,12 +117,10 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
         if model.startswith(("gemini-3", "gemini-2.5")):
             # Thinking models spend maxOutputTokens on hidden reasoning —
             # with the default budget the JSON gets truncated mid-object
-            payload["generationConfig"]["thinkingConfig"] = {
-                "thinkingBudget": 0
-            }
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
         if json_mode:
             payload["generationConfig"]["response_mime_type"] = "application/json"
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(
                 url,
                 headers={
@@ -134,7 +140,7 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
             "system": SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": prompt}],
         }
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -161,7 +167,7 @@ def _call_llm(prompt: str, json_mode: bool = True) -> str:
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=timeout_s) as client:
         resp = client.post(
             f"{base_url}/chat/completions",
             headers={
@@ -220,7 +226,11 @@ USER QUESTION: {question}
 
 RESPOND WITH VALID JSON ONLY:"""
     start = time.time()
+    deadline = start + AI_GENERATION_DEADLINE_SECONDS
     for attempt in range(MAX_RETRY_ATTEMPTS):
+        if time.time() > deadline - 10:
+            logger.warning("Generation deadline hit before attempt %d", attempt + 1)
+            break
         try:
             text = _call_llm(prompt, json_mode=True)
             validated = validate_response(text) if text else None
@@ -233,10 +243,15 @@ RESPOND WITH VALID JSON ONLY:"""
             )
             logger.error(f"Generation attempt {attempt + 1} failed: {e}")
             if attempt < MAX_RETRY_ATTEMPTS - 1:
-                time.sleep(15.0 if is_429 else RETRY_DELAY_SECONDS)
+                time.sleep(
+                    min(
+                        15.0 if is_429 else RETRY_DELAY_SECONDS,
+                        max(0.0, deadline - time.time()),
+                    )
+                )
     logger.error("All structured attempts failed")
     return generate_fallback_response(
-        context, question, sources, start, ticket_context, conversation_history
+        context, question, sources, deadline, ticket_context, conversation_history
     )
 
 
@@ -244,10 +259,20 @@ def generate_fallback_response(
     context: str,
     question: str,
     sources: list[str],
-    start: float,
+    deadline: float,
     ticket_context: str = "",
     conversation_history: str = "",
 ) -> Tuple[GeminiResponse, int]:
+    # No LLM call when the generation budget is exhausted — return the
+    # canned response so the request fails fast instead of hanging.
+    if time.time() > deadline - 10:
+        return (
+            _canned_fallback(
+                "Unable to process your request right now.",
+                "Generation deadline exhausted",
+            ),
+            0,
+        )
     try:
         extra = ""
         if ticket_context:
@@ -280,33 +305,45 @@ def generate_fallback_response(
             },
             reasoning_trace="Fallback due to structured generation failure",
         )
-        return fb, int((time.time() - start) * 1000)
+        return fb, int(
+            (time.time() - (deadline - AI_GENERATION_DEADLINE_SECONDS)) * 1000
+        )
     except Exception as e:
         logger.error(f"Fallback failed: {e}")
-        fb = GeminiResponse(
-            response="Technical difficulties. Please contact support.",
-            citations_used=[],
-            confidence_indicators=dict.fromkeys(
-                (
-                    "source_quality",
-                    "answer_completeness",
-                    "semantic_coherence",
-                    "citation_coverage",
-                ),
-                0.0,
+        return (
+            _canned_fallback(
+                "Technical difficulties. Please contact support.",
+                "System failure",
             ),
-            escalation_signals={
-                "requires_human": True,
-                "uncertainty_level": "critical",
-                "complexity_score": 1.0,
-                "missing_info": ["generation_system_failure"],
-            },
-            retrieval_quality=dict.fromkeys(
-                ("context_relevance", "source_diversity", "information_density"), 0.0
-            ),
-            reasoning_trace="System failure",
+            0,
         )
-        return fb, int((time.time() - start) * 1000)
+
+
+def _canned_fallback(response_text: str, reasoning: str) -> GeminiResponse:
+    """Zero-cost degraded response when the LLM ladder is exhausted."""
+    return GeminiResponse(
+        response=response_text,
+        citations_used=[],
+        confidence_indicators=dict.fromkeys(
+            (
+                "source_quality",
+                "answer_completeness",
+                "semantic_coherence",
+                "citation_coverage",
+            ),
+            0.0,
+        ),
+        escalation_signals={
+            "requires_human": True,
+            "uncertainty_level": "critical",
+            "complexity_score": 1.0,
+            "missing_info": ["generation_system_failure"],
+        },
+        retrieval_quality=dict.fromkeys(
+            ("context_relevance", "source_diversity", "information_density"), 0.0
+        ),
+        reasoning_trace=reasoning,
+    )
 
 
 def generate_completion(
@@ -350,8 +387,12 @@ def expand_query(query: str) -> List[str]:
     retrieval degrades gracefully.
     """
     try:
+        # Short timeout — expansion is optional; a hanging provider must
+        # not delay retrieval by the full 30s
         text = _call_llm(
-            f"{QUERY_EXPANSION_PROMPT}\n\nUSER QUERY: {query}", json_mode=True
+            f"{QUERY_EXPANSION_PROMPT}\n\nUSER QUERY: {query}",
+            json_mode=True,
+            timeout_s=8.0,
         )
         cleaned = text.strip()
         if cleaned.startswith("```json"):
@@ -359,7 +400,9 @@ def expand_query(query: str) -> List[str]:
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         data = json.loads(cleaned)
-        alternatives = [str(q).strip() for q in data.get("queries", []) if str(q).strip()]
+        alternatives = [
+            str(q).strip() for q in data.get("queries", []) if str(q).strip()
+        ]
         # Dedupe, keep original first, cap total at 3
         seen = {query}
         out = [query]
@@ -399,7 +442,9 @@ def generate_kb_draft(conversation: str) -> Tuple[str, str]:
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         data = json.loads(cleaned)
-        return str(data.get("title", "Untitled KB Article")), str(data.get("content", ""))
+        return str(data.get("title", "Untitled KB Article")), str(
+            data.get("content", "")
+        )
     except Exception as e:
         logger.error("KB draft generation failed: %s", e)
         raise

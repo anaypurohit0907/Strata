@@ -58,6 +58,7 @@ async def _migration_connect() -> asyncpg.Connection:
     no pooler queuing. Long index builds and ALTER TYPE must complete.
     """
     import ssl as _ssl
+
     from .db import _ssl_mode
 
     database_url = os.getenv("DATABASE_URL")
@@ -169,9 +170,7 @@ async def run_migrations():
             pending = [f for f in files if f.name not in applied]
 
             if not pending:
-                logger.info(
-                    "[migrate] All %d migrations already applied", len(files)
-                )
+                logger.info("[migrate] All %d migrations already applied", len(files))
                 return
 
             logger.info(

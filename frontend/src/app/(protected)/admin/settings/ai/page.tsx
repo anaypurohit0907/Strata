@@ -130,7 +130,9 @@ export default function AiSettingsPage() {
         </p>
 
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Model name</label>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            Model name
+          </label>
           <input
             value={config.gen_model}
             onChange={e =>
@@ -142,7 +144,9 @@ export default function AiSettingsPage() {
         </div>
 
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">API key</label>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            API key
+          </label>
           <div className="relative">
             <input
               type={showGenKey ? 'text' : 'password'}
@@ -247,7 +251,9 @@ export default function AiSettingsPage() {
         </div>
 
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">API key</label>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            API key
+          </label>
           <div className="relative">
             <input
               type={showEmbedKey ? 'text' : 'password'}
@@ -276,8 +282,8 @@ export default function AiSettingsPage() {
           <label className="text-xs text-muted-foreground mb-1 block">
             Vector dimension{' '}
             <span className="text-muted-foreground/70">
-              (auto-detected from the embedding model — must match the
-              vector column in the database, so it is not editable here)
+              (auto-detected from the embedding model — must match the vector
+              column in the database, so it is not editable here)
             </span>
           </label>
           <input

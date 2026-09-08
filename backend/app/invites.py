@@ -239,9 +239,12 @@ def create_invite(
     # Audit log
     try:
         from .admin import log_audit_sync
+
         log_audit_sync(
-            "invite.sent", user,
-            resource_type="invite", resource_id=str(invite["id"]),
+            "invite.sent",
+            user,
+            resource_type="invite",
+            resource_id=str(invite["id"]),
             org_id=org_id,
             metadata={"email": invite_data.email, "role": invite_data.role},
         )
@@ -435,9 +438,12 @@ def accept_invite(token: str, user: User = Depends(get_current_user)):
     # Audit log
     try:
         from .admin import log_audit_sync
+
         log_audit_sync(
-            "invite.accepted", user,
-            resource_type="invite", resource_id=str(invite["id"]),
+            "invite.accepted",
+            user,
+            resource_type="invite",
+            resource_id=str(invite["id"]),
             org_id=org_id,
             metadata={"org_name": invite.get("organization_name", ""), "role": role},
         )

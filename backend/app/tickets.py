@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from .ai_settings import gen_model
 from .auth import User, get_current_user
 from .db_sync import get_db_connection
 from .email import (
@@ -18,12 +19,10 @@ from .email import (
     send_ticket_created_for_customer_email,
     send_ticket_resolved_email,
 )
-from .ai_settings import gen_model
+from .entitlements import requires_feature
 from .observability import get_observer, log_rag_metrics
 from .org_middleware import require_org_context
-from .entitlements import requires_feature
 from .rag_scoring import casper_route, profile_ticket
-from .security import limiter
 from .schemas import (
     BulkTicketRequest,
     ChatRequest,
@@ -40,6 +39,7 @@ from .schemas import (
     TicketSummary,
     TicketWithMessages,
 )
+from .security import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -297,9 +297,12 @@ def create_ticket(
         # Audit log (fire-and-forget)
         try:
             from .admin import log_audit_sync
+
             log_audit_sync(
-                "ticket.created", user,
-                resource_type="ticket", resource_id=str(ticket_id),
+                "ticket.created",
+                user,
+                resource_type="ticket",
+                resource_id=str(ticket_id),
                 org_id=org_id,
                 metadata={"title": payload.title, "priority": payload.priority},
             )
@@ -964,9 +967,8 @@ def _get_conversation_context(
                     desc = (row["description"] or "").strip()
                     if len(desc) > _TICKET_DESC_MAX_CHARS:
                         desc = desc[:_TICKET_DESC_MAX_CHARS] + "…"
-                    ticket_context = (
-                        f"Title: {row['title']}"
-                        + (f"\nDescription: {desc}" if desc else "")
+                    ticket_context = f"Title: {row['title']}" + (
+                        f"\nDescription: {desc}" if desc else ""
                     )
                 cur.execute(
                     """
@@ -1131,9 +1133,7 @@ def chat_with_ai(
             from .embeddings import embed_texts
 
             _qvec = embed_texts([clean_query])[0]
-            similar_tickets = search_similar_tickets(
-                org_id, clean_query, _qvec, k=3
-            )
+            similar_tickets = search_similar_tickets(org_id, clean_query, _qvec, k=3)
             if similar_tickets:
                 _ticket_lines = "\n".join(
                     f"- [{i+1}] Similar past ticket: {t['title']}"
@@ -1308,7 +1308,9 @@ def chat_with_ai(
                 )
 
             except Exception as structured_error:
-                observer.add_warning(f"Structured generation failed: {structured_error}")
+                observer.add_warning(
+                    f"Structured generation failed: {structured_error}"
+                )
                 # Fallback to basic generation
                 ai_response, latency_ms = generate_completion(
                     context,
@@ -1322,13 +1324,13 @@ def chat_with_ai(
 
         except Exception as e:
             observer.add_error(f"AI generation failed: {e}")
-            raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+            raise HTTPException(
+                status_code=502, detail=f"AI generation failed: {str(e)}"
+            )
 
         # Store in cache (bounded LRU-ish: evict oldest on overflow)
         if len(_answer_cache) >= ANSWER_CACHE_MAX:
-            oldest_key = min(
-                _answer_cache, key=lambda k: _answer_cache[k][1]
-            )
+            oldest_key = min(_answer_cache, key=lambda k: _answer_cache[k][1])
             _answer_cache.pop(oldest_key, None)
         _answer_cache[cache_key] = (
             {

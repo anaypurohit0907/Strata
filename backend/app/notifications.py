@@ -109,8 +109,7 @@ async def list_notifications(
         )
         unread = rows[0]["unread_total"] if rows else 0
         items = [
-            {k: v for k, v in dict(r).items() if k != "unread_total"}
-            for r in rows
+            {k: v for k, v in dict(r).items() if k != "unread_total"} for r in rows
         ]
         return {"unread": int(unread), "items": items}
     except Exception:

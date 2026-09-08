@@ -235,15 +235,12 @@ export default function AdminRolesPage() {
       }
       const token = sessionData.session.access_token;
 
-      const response = await fetch(
-        `${API_BASE}/api/admin/audit-log?limit=10`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const response = await fetch(`${API_BASE}/api/admin/audit-log?limit=10`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
       if (!response.ok) {
         setUserActivities([]);

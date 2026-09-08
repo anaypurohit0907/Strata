@@ -994,7 +994,10 @@ export default function TicketDetailPage({
 
           {/* AI Chat */}
           {canCompose && (
-            <FeatureGate feature="ai_rag" description="AI Assistant requires Starter plan or above.">
+            <FeatureGate
+              feature="ai_rag"
+              description="AI Assistant requires Starter plan or above."
+            >
               <div className="bg-violet-950/20 border border-violet-800/50 rounded-xl p-4">
                 <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-violet-300">
                   <Bot className="h-4 w-4" /> Ask AI Assistant
@@ -1009,7 +1012,11 @@ export default function TicketDetailPage({
                     disabled={aiLoading}
                     className="flex-1 resize-none text-sm"
                   />
-                  <Button type="submit" disabled={aiLoading || !aiQuery.trim()} className="self-end">
+                  <Button
+                    type="submit"
+                    disabled={aiLoading || !aiQuery.trim()}
+                    className="self-end"
+                  >
                     {aiLoading ? '…' : 'Ask'}
                   </Button>
                 </form>

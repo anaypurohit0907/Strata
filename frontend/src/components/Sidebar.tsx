@@ -379,10 +379,7 @@ function DarkModeToggle({ isCollapsed }: { isCollapsed: boolean }) {
   if (!mounted) {
     return (
       <div
-        className={cn(
-          'h-9 w-full rounded-lg',
-          isCollapsed && 'w-9 mx-auto'
-        )}
+        className={cn('h-9 w-full rounded-lg', isCollapsed && 'w-9 mx-auto')}
       />
     );
   }
@@ -548,12 +545,16 @@ export function Sidebar({
                   </p>
                 )}
                 <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                  <span className={cn(
-                    'inline-block px-1.5 py-px rounded text-[10px] font-semibold',
-                    userRole === 'admin' ? 'bg-red-900/40 text-red-300' :
-                    userRole === 'rep'   ? 'bg-blue-900/40 text-blue-300' :
-                                           'bg-green-900/40 text-green-300'
-                  )}>
+                  <span
+                    className={cn(
+                      'inline-block px-1.5 py-px rounded text-[10px] font-semibold',
+                      userRole === 'admin'
+                        ? 'bg-red-900/40 text-red-300'
+                        : userRole === 'rep'
+                          ? 'bg-blue-900/40 text-blue-300'
+                          : 'bg-green-900/40 text-green-300'
+                    )}
+                  >
                     {userRole === 'customer' ? 'Client' : userRole || 'Client'}
                   </span>
                   <span className="inline-block px-1.5 py-px rounded text-[10px] font-semibold bg-primary/10 text-primary">

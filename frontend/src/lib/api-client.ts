@@ -179,8 +179,11 @@ export const api = {
   delete: <T = unknown>(endpoint: string, orgId?: string | null) =>
     apiCall<T>(endpoint, { method: 'DELETE', orgId }),
 
-  patch: <T = unknown>(endpoint: string, body: unknown, orgId?: string | null) =>
-    apiCall<T>(endpoint, { method: 'PATCH', body, orgId }),
+  patch: <T = unknown>(
+    endpoint: string,
+    body: unknown,
+    orgId?: string | null
+  ) => apiCall<T>(endpoint, { method: 'PATCH', body, orgId }),
 };
 
 /** Drop every cached GET response — call on sign-out / user switch so a

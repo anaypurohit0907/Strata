@@ -349,7 +349,10 @@ function TicketsPageInner() {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
 
     // Auto-open create dialog when arriving via ?new=1 (e.g. dashboard CTA)
-    if (typeof window !== 'undefined' && window.location.search.includes('new=1')) {
+    if (
+      typeof window !== 'undefined' &&
+      window.location.search.includes('new=1')
+    ) {
       setNewTicketOpen(true);
       window.history.replaceState({}, '', window.location.pathname);
     }

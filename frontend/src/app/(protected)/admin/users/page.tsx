@@ -165,9 +165,7 @@ export default function AdminUsersPage() {
           )
         );
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : 'Failed to load members'
-        );
+        toast.error(e instanceof Error ? e.message : 'Failed to load members');
       } finally {
         setMembersLoading(false);
       }
@@ -209,9 +207,7 @@ export default function AdminUsersPage() {
       );
       toast.success(`${member.user_email} is now ${newRole}`);
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : 'Failed to update role'
-      );
+      toast.error(e instanceof Error ? e.message : 'Failed to update role');
     } finally {
       setRoleChanging(null);
     }
@@ -230,9 +226,7 @@ export default function AdminUsersPage() {
       toast.success(`${member.user_email} removed from ${orgName}`);
       setRemoveDialog({ open: false, member: null });
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : 'Failed to remove member'
-      );
+      toast.error(e instanceof Error ? e.message : 'Failed to remove member');
     } finally {
       setRemoving(false);
     }
@@ -253,9 +247,7 @@ export default function AdminUsersPage() {
         toast.success(`Invite sent to ${inviteEmail}`);
       }
     } catch (e) {
-      toast.error(
-        e instanceof Error ? e.message : 'Failed to create invite'
-      );
+      toast.error(e instanceof Error ? e.message : 'Failed to create invite');
     } finally {
       setInviting(false);
     }

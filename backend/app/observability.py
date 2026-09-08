@@ -330,12 +330,19 @@ def get_rag_analytics(hours: int = 24) -> Dict[str, Any]:
                         "negative": fb_neg,
                         "total": fb_pos + fb_neg,
                         "positive_rate": (
-                            fb_pos / (fb_pos + fb_neg) if (fb_pos + fb_neg) > 0 else None
+                            fb_pos / (fb_pos + fb_neg)
+                            if (fb_pos + fb_neg) > 0
+                            else None
                         ),
                     }
                 except Exception as fb_err:
                     logger.warning("Feedback stats query failed: %s", fb_err)
-                    feedback_stats = {"positive": 0, "negative": 0, "total": 0, "positive_rate": None}
+                    feedback_stats = {
+                        "positive": 0,
+                        "negative": 0,
+                        "total": 0,
+                        "positive_rate": None,
+                    }
 
                 return {
                     "time_window_hours": hours,

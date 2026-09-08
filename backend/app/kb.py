@@ -185,9 +185,7 @@ async def ingest(
             _log.info("[kb] embed_texts done; writing to pgvector")
 
             # 6) Update chunks with embedding vectors
-            for idx_i, (chunk_id, vec) in enumerate(
-                zip(unique_ids, vectors)
-            ):
+            for idx_i, (chunk_id, vec) in enumerate(zip(unique_ids, vectors)):
                 _log.info("[kb] DB update chunk %d/%d", idx_i + 1, len(unique_ids))
                 cur.execute(
                     "UPDATE app.chunks SET embedding_vec = %s::vector, embedding = %s::float4[] WHERE id = %s::uuid",
@@ -203,13 +201,23 @@ async def ingest(
             invalidate_answer_cache(org_id)
 
             import asyncio
+
             from .admin import log_audit
-            asyncio.create_task(log_audit(
-                "kb.document.uploaded", user,
-                resource_type="document", resource_id=str(document_id),
-                org_id=org_id,
-                metadata={"title": title, "size_bytes": size_bytes, "mime_type": detected_mime},
-            ))
+
+            asyncio.create_task(
+                log_audit(
+                    "kb.document.uploaded",
+                    user,
+                    resource_type="document",
+                    resource_id=str(document_id),
+                    org_id=org_id,
+                    metadata={
+                        "title": title,
+                        "size_bytes": size_bytes,
+                        "mime_type": detected_mime,
+                    },
+                )
+            )
 
             return IngestResponse(
                 document_id=document_id,
@@ -298,6 +306,7 @@ async def delete_document(
     invalidate_answer_cache(org_id)
 
     import asyncio
+
     from .admin import log_audit
 
     asyncio.create_task(
@@ -351,7 +360,11 @@ class SearchResult(BaseModel):
 
 @router.get("/search", response_model=List[SearchResult])
 async def search(
-    q: str, k: int = 3, request: Request = None, user: User = Depends(get_current_user), _gate: None = requires_feature("kb")
+    q: str,
+    k: int = 3,
+    request: Request = None,
+    user: User = Depends(get_current_user),
+    _gate: None = requires_feature("kb"),
 ):
     """Search knowledge base for similar content using pgvector."""
     org_id = require_org_context(request)
@@ -380,9 +393,7 @@ async def search(
 
             for row in cur.fetchall():
                 preview = (
-                    row["text"][:200] + "..."
-                    if len(row["text"]) > 200
-                    else row["text"]
+                    row["text"][:200] + "..." if len(row["text"]) > 200 else row["text"]
                 )
                 results.append(
                     SearchResult(

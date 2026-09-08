@@ -12,7 +12,9 @@ jest.mock('@/contexts/OrganizationContext', () => ({
 
 import { useOrganization } from '@/contexts/OrganizationContext';
 
-const mockUseOrg = useOrganization as jest.MockedFunction<typeof useOrganization>;
+const mockUseOrg = useOrganization as jest.MockedFunction<
+  typeof useOrganization
+>;
 
 describe('plans (lib)', () => {
   it('community has no features', () => {

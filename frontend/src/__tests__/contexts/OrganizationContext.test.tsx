@@ -157,9 +157,7 @@ describe('OrganizationContext', () => {
       );
     });
 
-    await waitFor(() =>
-      expect(mockSupabase.auth.signOut).toHaveBeenCalled()
-    );
+    await waitFor(() => expect(mockSupabase.auth.signOut).toHaveBeenCalled());
   });
 
   it('persists current org to localStorage', async () => {

@@ -11,9 +11,9 @@ from typing import List
 
 import httpx
 
-from .ai_settings import embed_api_key, gen_api_key
+from .ai_settings import embed_api_key
 from .ai_settings import embed_dim as _embed_dim
-from .ai_settings import embed_model
+from .ai_settings import embed_model, gen_api_key
 
 logger = logging.getLogger(__name__)
 

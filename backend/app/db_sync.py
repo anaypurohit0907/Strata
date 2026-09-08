@@ -10,8 +10,7 @@ import os
 import psycopg
 from fastapi import HTTPException
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
-from psycopg_pool import PoolTimeout
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")

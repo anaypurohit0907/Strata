@@ -564,7 +564,6 @@ export default function AdminSettingsPage() {
             </div>
           </CardContent>
         </Card>
-
       </div>
 
       {/* Attention Thresholds */}

@@ -490,7 +490,9 @@ function Step3({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
   useEffect(() => {
     let active = true;
     fetch(`${API_BASE}/api/ai/status`)
-      .then(res => (res.ok ? res.json() : Promise.reject(new Error('unavailable'))))
+      .then(res =>
+        res.ok ? res.json() : Promise.reject(new Error('unavailable'))
+      )
       .then(data => {
         if (active) setStatus(data);
       })
@@ -510,8 +512,8 @@ function Step3({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
         </div>
         <h2 className="text-xl font-bold text-white mb-1">AI engine status</h2>
         <p className="text-sm text-zinc-400">
-          AI runs on bring-your-own-key providers. During the pilot, we configure
-          keys for you.
+          AI runs on bring-your-own-key providers. During the pilot, we
+          configure keys for you.
         </p>
       </div>
 
@@ -523,7 +525,9 @@ function Step3({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-zinc-400">Embedding model</span>
-            <span className="font-mono text-zinc-200">{status.embed_model}</span>
+            <span className="font-mono text-zinc-200">
+              {status.embed_model}
+            </span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-zinc-400">Status</span>

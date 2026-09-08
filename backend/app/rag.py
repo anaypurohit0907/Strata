@@ -348,6 +348,7 @@ def search_similar_tickets(
     ranked = sorted(rrf, key=lambda tid: rrf[tid], reverse=True)[:k]
     return [meta[tid] for tid in ranked]
 
+
 # Configuration from environment
 TOP_K = int(os.getenv("RAG_TOP_K", "6"))
 MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.25"))
@@ -542,9 +543,7 @@ def retrieve(
         # Cross-query RRF: rank within each query's result list
         for rank, chunk in enumerate(hits):
             cid = chunk["chunk_id"]
-            fusion_scores[cid] = fusion_scores.get(cid, 0.0) + 1.0 / (
-                RRF_K + rank + 1
-            )
+            fusion_scores[cid] = fusion_scores.get(cid, 0.0) + 1.0 / (RRF_K + rank + 1)
             if cid not in fused:
                 fused[cid] = chunk
 

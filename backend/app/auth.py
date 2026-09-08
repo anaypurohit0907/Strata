@@ -118,9 +118,7 @@ async def _fetch_jwks() -> list[dict]:
             return _jwks_cache[0]
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-                )
+                resp = await client.get(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
                 resp.raise_for_status()
                 keys = resp.json().get("keys", [])
                 _jwks_cache = (keys, now)
