@@ -2,10 +2,16 @@ name: 🗄️ Nightly DB Backup
 
 # Supabase free tier has NO automatic backups. This cron dumps the
 # database nightly and keeps 90 days of artifacts. Restores are manual:
-# download artifact, then psql < dump against a fresh Supabase project.
+# download artifact, then pg_restore against a fresh Supabase project.
 #
-# Required repo secret: DATABASE_URL (full connection string WITH password,
-# direct port 5432 — not the pooler, pg_dump wants a session).
+# Connection: Supabase SESSION POOLER (port 5432, IPv4) — GitHub runners
+# have no IPv6, so the direct db.<ref>.supabase.co:5432 host is
+# unreachable from Actions. Session mode is required for pg_dump
+# (the 6543 transaction pooler is not).
+#
+# Required repo secret:
+#   DATABASE_URL = postgresql://postgres.<ref>:PASSWORD@aws-<n>-<region>.pooler.supabase.com:5432/postgres
+# When prod Supabase differs, update this one secret — nothing else changes.
 
 on:
   schedule:
@@ -17,15 +23,20 @@ jobs:
     name: 💾 Dump database
     runs-on: ubuntu-latest
     steps:
-      - name: 🗄️ Dump database
+      # Supabase server is 17.x — pg_dump must be >= server version
+      - name: 🗄️ Dump database (postgres 17 client)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          echo "Dumping $(date -u +%Y-%m-%d) ..."
-          pg_dump "$DATABASE_URL" \
-            --no-owner --no-privileges \
-            --format=custom \
-            --file "strata-backup-$(date -u +%Y-%m-%d).dump"
+          docker run --rm \
+            -e DATABASE_URL \
+            -v "$PWD":/backup \
+            --entrypoint /bin/sh \
+            postgres:17-alpine \
+            -c 'pg_dump "$DATABASE_URL" \
+                  --no-owner --no-privileges \
+                  --format=custom \
+                  --file /backup/strata-backup-$(date -u +%Y-%m-%d).dump'
           ls -lh strata-backup-*.dump
       - name: ⬆️ Upload backup artifact
         uses: actions/upload-artifact@v4
