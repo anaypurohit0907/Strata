@@ -170,4 +170,43 @@ def increment_ai_query(org_id: str) -> None:
         )
 
 
-__all__ = ["get_entitlements", "requires_feature", "increment_ai_query", "OrgEntitlements"]
+def enforce_agent_seat(org_id: str) -> None:
+    """Raise HTTP 402 if the org is at its plan's team-member cap.
+
+    Call BEFORE inserting into app.organization_members (non-founder
+    paths: add member, invite accept, admin add). -1 = unlimited.
+    """
+    ent = get_entitlements(org_id)
+    limit = ent.limits.get("agents", -1)
+    if limit == -1:
+        return
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM app.organization_members WHERE organization_id = %s",
+                (org_id,),
+            )
+            current = cur.fetchone()["n"]
+    if current >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "agent_seat_limit",
+                "message": (
+                    f"Team member limit reached ({limit} on the "
+                    f"{ent.plan_id} plan). Upgrade to add more members."
+                ),
+                "used": current,
+                "limit": limit,
+                "upgrade_to": "business",
+            },
+        )
+
+
+__all__ = [
+    "get_entitlements",
+    "requires_feature",
+    "increment_ai_query",
+    "enforce_agent_seat",
+    "OrgEntitlements",
+]

@@ -1,0 +1,36 @@
+name: 🗄️ Nightly DB Backup
+
+# Supabase free tier has NO automatic backups. This cron dumps the
+# database nightly and keeps 90 days of artifacts. Restores are manual:
+# download artifact, then psql < dump against a fresh Supabase project.
+#
+# Required repo secret: DATABASE_URL (full connection string WITH password,
+# direct port 5432 — not the pooler, pg_dump wants a session).
+
+on:
+  schedule:
+    - cron: '30 2 * * *' # 02:30 UTC daily
+  workflow_dispatch: {} # manual trigger for on-demand backups
+
+jobs:
+  backup:
+    name: 💾 Dump database
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🗄️ Dump database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Dumping $(date -u +%Y-%m-%d) ..."
+          pg_dump "$DATABASE_URL" \
+            --no-owner --no-privileges \
+            --format=custom \
+            --file "strata-backup-$(date -u +%Y-%m-%d).dump"
+          ls -lh strata-backup-*.dump
+      - name: ⬆️ Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: strata-backup-${{ github.run_id }}
+          path: strata-backup-*.dump
+          retention-days: 90
+          if-no-files-found: error

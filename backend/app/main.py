@@ -36,6 +36,27 @@ WEB_ORIGIN = os.getenv("WEB_ORIGIN", "http://localhost:3000")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
+# Sentry error tracking — active only when SENTRY_DSN is set. Free
+# developer tier (5k errors/mo) is ample for a pilot. Without the DSN
+# the app runs exactly as before (sentry-sdk optional at runtime).
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=ENVIRONMENT,
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+            integrations=[FastApiIntegration()],
+        )
+        logger = logging.getLogger(__name__)
+        logger.info("Sentry error tracking enabled (%s)", ENVIRONMENT)
+    except ImportError:
+        print("⚠️  WARNING: SENTRY_DSN set but sentry-sdk not installed.")
+
 # Initialize logging system
 setup_logging(
     app_name="ticketpilot",

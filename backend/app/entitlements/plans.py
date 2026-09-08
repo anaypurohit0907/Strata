@@ -17,7 +17,7 @@ PLANS: dict[str, PlanDef] = {
             "audit_log":       False,
         },
         "limits": {
-            "agents":     5,
+            "agents":     10,
             "ai_queries": 0,
         },
     },

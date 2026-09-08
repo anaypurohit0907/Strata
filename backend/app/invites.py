@@ -386,6 +386,11 @@ def accept_invite(token: str, user: User = Depends(get_current_user)):
                 role=role,
             )
 
+        # --- Plan seat cap (community=10, paid=unlimited) ----------------
+        from .entitlements import enforce_agent_seat
+
+        enforce_agent_seat(org_id)
+
         # --- Add user to organization_members ----------------------------
         cursor.execute(
             """

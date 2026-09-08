@@ -1087,6 +1087,11 @@ async def admin_add_org_member(
         if existing:
             raise HTTPException(409, "User is already a member of this organisation")
 
+        # Plan seat cap (community=10, paid=unlimited)
+        from .entitlements import enforce_agent_seat
+
+        enforce_agent_seat(org_id)
+
         await conn.execute(
             """INSERT INTO app.organization_members (organization_id, user_id, role, invited_by)
                VALUES ($1, $2, $3, $4)""",
