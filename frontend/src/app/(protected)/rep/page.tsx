@@ -913,10 +913,10 @@ export default function RepConsolePage() {
       open: 'bg-blue-900/40 text-blue-300',
       in_progress: 'bg-yellow-900/40 text-yellow-300',
       resolved: 'bg-green-900/40 text-green-300',
-      closed: 'bg-zinc-800 text-zinc-400',
+      closed: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
       escalated: 'bg-red-900/40 text-red-300',
     };
-    return colors[status] || 'bg-zinc-800 text-zinc-400';
+    return colors[status] || 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400';
   };
 
   const getPriorityBadge = (priority: string) => {
@@ -926,7 +926,7 @@ export default function RepConsolePage() {
       high: 'bg-red-900/40 text-red-300',
       urgent: 'bg-red-900/60 text-red-200 font-semibold',
     };
-    return colors[priority] || 'bg-zinc-800 text-zinc-400';
+    return colors[priority] || 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400';
   };
 
   const getPriorityLevelBadge = (
@@ -959,13 +959,13 @@ export default function RepConsolePage() {
       },
       7: {
         label: 'P7',
-        className: 'bg-zinc-800 text-zinc-400 border border-zinc-700',
+        className: 'bg-zinc-200 text-zinc-600 border border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700',
       },
     };
     return (
       map[level] ?? {
         label: `P${level}`,
-        className: 'bg-zinc-800 text-zinc-400',
+        className: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
       }
     );
   };

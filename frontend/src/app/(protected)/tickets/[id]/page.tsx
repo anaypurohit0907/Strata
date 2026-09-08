@@ -207,7 +207,7 @@ const PRIORITY_LEVEL_COLORS: Record<number, string> = {
   4: 'bg-blue-950/40 text-blue-400 border border-blue-800',
   5: 'bg-indigo-950/40 text-indigo-400 border border-indigo-800',
   6: 'bg-violet-950/40 text-violet-400 border border-violet-800',
-  7: 'bg-zinc-800/60 text-zinc-400 border border-zinc-700',
+  7: 'bg-zinc-100 text-zinc-600 border border-zinc-200 dark:bg-zinc-800/60 dark:text-zinc-400 dark:border-zinc-700',
 };
 
 // ── Sub-components ───────────────────────────────────────────────────────────
@@ -793,7 +793,7 @@ export default function TicketDetailPage({
                           : message.sender_role === 'rep' ||
                               message.sender_role === 'admin'
                             ? 'bg-blue-900/50 text-blue-300'
-                            : 'bg-zinc-800 text-zinc-300'
+                            : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
                       )}
                     >
                       {message.sender_role === 'ai' ? (

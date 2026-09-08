@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useTheme } from 'next-themes';
 import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 import { OrganizationSelector } from '@/components/OrganizationSelector';
@@ -370,29 +371,28 @@ function NotificationBell({ isCollapsed }: { isCollapsed: boolean }) {
 }
 
 function DarkModeToggle({ isCollapsed }: { isCollapsed: boolean }) {
-  const [dark, setDark] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia(
-      '(prefers-color-scheme: dark)'
-    ).matches;
-    const isDark = stored === 'dark' || (!stored && prefersDark);
-    setDark(isDark);
-    document.documentElement.classList.toggle('dark', isDark);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle('dark', next);
-    localStorage.setItem('theme', next ? 'dark' : 'light');
-  };
+  if (!mounted) {
+    return (
+      <div
+        className={cn(
+          'h-9 w-full rounded-lg',
+          isCollapsed && 'w-9 mx-auto'
+        )}
+      />
+    );
+  }
+
+  const dark = resolvedTheme === 'dark';
 
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={() => setTheme(dark ? 'light' : 'dark')}
       title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
       className={cn(
         'flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors',

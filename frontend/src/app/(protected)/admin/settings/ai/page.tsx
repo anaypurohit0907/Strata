@@ -106,14 +106,14 @@ export default function AiSettingsPage() {
       <div className="flex items-center gap-3">
         <button
           onClick={() => router.push('/admin/settings')}
-          className="p-2 rounded-lg hover:bg-zinc-800 transition-colors"
+          className="p-2 rounded-lg hover:bg-accent transition-colors"
         >
-          <ArrowLeft className="w-5 h-5 text-zinc-400" />
+          <ArrowLeft className="w-5 h-5 text-muted-foreground" />
         </button>
         <Brain className="w-6 h-6 text-purple-400" />
         <div>
           <h1 className="text-lg font-semibold">AI Configuration</h1>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-muted-foreground">
             Bring your own API keys — no server env changes needed
           </p>
         </div>
@@ -121,28 +121,28 @@ export default function AiSettingsPage() {
 
       {/* Generation */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Wrench className="w-4 h-4" /> Generation
         </h2>
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-muted-foreground">
           Model prefixes: gemini-* → Google, gpt-* → OpenAI, claude-* →
           Anthropic, llama-*/mixtral-* → Groq/Together
         </p>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">Model name</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Model name</label>
           <input
             value={config.gen_model}
             onChange={e =>
               setConfig(p => ({ ...p, gen_model: e.target.value }))
             }
             placeholder="gemini-2.0-flash"
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+            className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
           />
         </div>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">API key</label>
+          <label className="text-xs text-muted-foreground mb-1 block">API key</label>
           <div className="relative">
             <input
               type={showGenKey ? 'text' : 'password'}
@@ -151,12 +151,12 @@ export default function AiSettingsPage() {
                 setConfig(p => ({ ...p, gen_api_key: e.target.value }))
               }
               placeholder="Set or leave blank to use env var"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+              className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
             <button
               type="button"
               onClick={() => setShowGenKey(p => !p)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               {showGenKey ? (
                 <EyeOff className="w-4 h-4" />
@@ -168,9 +168,9 @@ export default function AiSettingsPage() {
         </div>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">
+          <label className="text-xs text-muted-foreground mb-1 block">
             API base URL{' '}
-            <span className="text-zinc-600">
+            <span className="text-muted-foreground/70">
               (optional, for OpenAI-compatible providers)
             </span>
           </label>
@@ -180,13 +180,13 @@ export default function AiSettingsPage() {
               setConfig(p => ({ ...p, gen_api_base: e.target.value }))
             }
             placeholder="https://api.groq.com/openai/v1"
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+            className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
           />
         </div>
 
         <div className="flex gap-4">
           <div className="flex-1">
-            <label className="text-xs text-zinc-400 mb-1 block">
+            <label className="text-xs text-muted-foreground mb-1 block">
               Temperature
             </label>
             <input
@@ -201,11 +201,11 @@ export default function AiSettingsPage() {
                   temperature: parseFloat(e.target.value) || 0,
                 }))
               }
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+              className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
           </div>
           <div className="flex-1">
-            <label className="text-xs text-zinc-400 mb-1 block">
+            <label className="text-xs text-muted-foreground mb-1 block">
               Max tokens
             </label>
             <input
@@ -220,7 +220,7 @@ export default function AiSettingsPage() {
                   max_tokens: parseInt(e.target.value) || 0,
                 }))
               }
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+              className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
           </div>
         </div>
@@ -228,12 +228,12 @@ export default function AiSettingsPage() {
 
       {/* Embeddings */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Brain className="w-4 h-4" /> Embeddings
         </h2>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">
+          <label className="text-xs text-muted-foreground mb-1 block">
             Embedding model
           </label>
           <input
@@ -242,12 +242,12 @@ export default function AiSettingsPage() {
               setConfig(p => ({ ...p, embed_model: e.target.value }))
             }
             placeholder="gemini-embedding-001"
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+            className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
           />
         </div>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">API key</label>
+          <label className="text-xs text-muted-foreground mb-1 block">API key</label>
           <div className="relative">
             <input
               type={showEmbedKey ? 'text' : 'password'}
@@ -256,12 +256,12 @@ export default function AiSettingsPage() {
                 setConfig(p => ({ ...p, embed_api_key: e.target.value }))
               }
               placeholder="Leave blank to use generation key"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-purple-500"
+              className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
             <button
               type="button"
               onClick={() => setShowEmbedKey(p => !p)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               {showEmbedKey ? (
                 <EyeOff className="w-4 h-4" />
@@ -273,9 +273,9 @@ export default function AiSettingsPage() {
         </div>
 
         <div>
-          <label className="text-xs text-zinc-400 mb-1 block">
+          <label className="text-xs text-muted-foreground mb-1 block">
             Vector dimension{' '}
-            <span className="text-zinc-600">
+            <span className="text-muted-foreground/70">
               (auto-detected, override if needed)
             </span>
           </label>
@@ -291,7 +291,7 @@ export default function AiSettingsPage() {
                 embed_dim: parseInt(e.target.value) || 0,
               }))
             }
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+            className="w-full bg-surface2 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500"
           />
         </div>
       </section>
@@ -300,7 +300,7 @@ export default function AiSettingsPage() {
       <button
         onClick={save}
         disabled={saving}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 text-white font-medium text-sm hover:bg-purple-500 disabled:opacity-50 transition-colors"
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 text-foreground font-medium text-sm hover:bg-purple-500 disabled:opacity-50 transition-colors"
       >
         {saving ? (
           <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
