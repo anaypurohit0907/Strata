@@ -1434,7 +1434,10 @@ async def update_ai_settings(body: dict, user: User = Depends(get_current_user))
         "max_tokens",
         "embed_model",
         "embed_api_key",
-        "embed_dim",
+        # embed_dim intentionally NOT settable via API: it must match the
+        # vector(768) column in app.chunks — a wrong value 500s every KB
+        # ingest. Auto-detected from the model; env EMBEDDING_DIM override
+        # still works for infra changes.
     }
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
