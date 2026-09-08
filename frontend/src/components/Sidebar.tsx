@@ -447,6 +447,7 @@ export function Sidebar({
 
   const isItemActive = (item: NavItem) => {
     if (item.href === '/admin') return pathname === '/admin';
+    if (item.href === '/rep') return pathname === '/rep';
     return pathname === item.href || pathname.startsWith(item.href + '/');
   };
 
