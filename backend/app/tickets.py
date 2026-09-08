@@ -928,6 +928,92 @@ def fetch_chunks_by_faiss_ids(faiss_ids: List[int], org_id: str) -> List[dict]:
         return cursor.fetchall()
 
 
+# ── Chat conversation context ────────────────────────────────────────────────
+
+CHAT_HISTORY_MAX_CHARS = int(os.getenv("CHAT_HISTORY_MAX_CHARS", "2000"))
+CHAT_HISTORY_MAX_MESSAGES = 10
+_TICKET_DESC_MAX_CHARS = 500
+_HISTORY_MSG_MAX_CHARS = 400
+
+_ROLE_LABELS = {"customer": "CUSTOMER", "rep": "SUPPORT", "ai": "AI"}
+
+
+def _get_conversation_context(
+    ticket_id: str,
+) -> Tuple[str, str, str]:
+    """Fetch ticket summary + recent non-internal messages for AI chat.
+
+    Returns (ticket_context, history_text, prev_customer_msg).
+    history_text is oldest-first, most recent messages win when the char
+    budget (CHAT_HISTORY_MAX_CHARS) is exceeded. Internal rep notes and
+    system messages are excluded. prev_customer_msg is the customer's
+    message immediately before the current turn ('' if none) — used to
+    give follow-up queries their referents during retrieval.
+    """
+    ticket_context = ""
+    prev_customer_msg = ""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT title, description FROM app.tickets WHERE id = %s",
+                    (ticket_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    desc = (row["description"] or "").strip()
+                    if len(desc) > _TICKET_DESC_MAX_CHARS:
+                        desc = desc[:_TICKET_DESC_MAX_CHARS] + "…"
+                    ticket_context = (
+                        f"Title: {row['title']}"
+                        + (f"\nDescription: {desc}" if desc else "")
+                    )
+                cur.execute(
+                    """
+                    SELECT sender_role, body
+                    FROM app.messages
+                    WHERE ticket_id = %s
+                      AND is_internal = false
+                      AND sender_role IN ('customer', 'rep', 'ai')
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (ticket_id, CHAT_HISTORY_MAX_MESSAGES),
+                )
+                # DESC fetch → reverse to chronological order; when over
+                # budget drop OLDEST lines (head of the list)
+                messages = list(reversed(cur.fetchall() or []))
+    except Exception as e:
+        logger.warning("Conversation context fetch failed: %s", e)
+        return ticket_context, "", ""
+
+    budget = CHAT_HISTORY_MAX_CHARS
+    kept: list[str] = []
+    # Newest first — when over budget, drop the OLDEST turns (most recent
+    # context matters most for the current question)
+    for m in reversed(messages):
+        role = _ROLE_LABELS.get(m["sender_role"], m["sender_role"].upper())
+        body = (m["body"] or "").strip()
+        if len(body) > _HISTORY_MSG_MAX_CHARS:
+            body = body[:_HISTORY_MSG_MAX_CHARS] + "…"
+        line = f"{role}: {body}"
+        if len(line) > budget:
+            break
+        kept.append(line)
+        budget -= len(line) + 1
+
+    history_text = "\n".join(reversed(kept))
+
+    # Last CUSTOMER message in the fetched window (the current turn is not
+    # yet persisted, so this is the previous turn)
+    for m in reversed(messages):
+        if m["sender_role"] == "customer":
+            prev_customer_msg = (m["body"] or "").strip()
+            break
+
+    return ticket_context, history_text, prev_customer_msg
+
+
 @router.post("/tickets/{ticket_id}/chat", response_model=ChatResponse)
 @limiter.limit("10/minute")
 def chat_with_ai(
@@ -974,8 +1060,15 @@ def chat_with_ai(
                 (ticket_id, user.id, org_id),
             )
 
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Ticket not found")
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # 1b) Fetch conversation context: ticket summary + prior messages.
+    # Gives the model ticket awareness and multi-turn memory. Internal rep
+    # notes are excluded — the AI may be answering the customer.
+    ticket_context, history_text, prev_customer_msg = _get_conversation_context(
+        ticket_id
+    )
 
     # 2) Rate limiting per ticket
     now = time.time()
@@ -988,10 +1081,18 @@ def chat_with_ai(
     clean_query = scrub(payload.query)
     observer.record_embedding_metrics(clean_query, 0)  # Will update with actual timing
 
+    # 3b) Follow-up queries ("that didn't work either") lose their referent
+    # when embedded bare — combine the previous customer message with the
+    # current query so retrieval sees what "it" means
+    retrieval_query = clean_query
+    if prev_customer_msg and prev_customer_msg != payload.query.strip():
+        combined = scrub(prev_customer_msg)[-1000:] + "\n" + clean_query
+        retrieval_query = combined[:1200]
+
     # 4) Retrieve relevant chunks using pgvector search
     retrieval_start = time.time()
     retrieval_result = retrieve(
-        clean_query,
+        retrieval_query,
         org_id=org_id,
     )
     retrieval_latency = int((time.time() - retrieval_start) * 1000)
@@ -1171,9 +1272,9 @@ def chat_with_ai(
     # 5) Generate AI response with enhanced structured generation
     generation_start = time.time()
 
-    # Answer cache — identical prompt (context+query) replays the LLM result
-    # without a generation call (J.4). Message rows are still persisted fresh.
-    prompt_hash = compute_prompt_hash(context, clean_query)
+    # Answer cache — identical prompt (history+context+query) replays the
+    # LLM result without a generation call (J.4). Message rows persist fresh.
+    prompt_hash = compute_prompt_hash(context, clean_query, history_text)
     cache_key = f"{org_id}:{prompt_hash}"
     cached = _answer_cache.get(cache_key)
     if cached and (time.monotonic() - cached[1]) < ANSWER_CACHE_TTL:
@@ -1187,7 +1288,11 @@ def chat_with_ai(
             # Try structured generation first
             try:
                 structured_response, latency_ms = generate_structured_completion(
-                    context, clean_query, sources
+                    context,
+                    clean_query,
+                    sources,
+                    ticket_context=ticket_context,
+                    conversation_history=history_text,
                 )
                 ai_response = structured_response.response
 
@@ -1200,7 +1305,13 @@ def chat_with_ai(
             except Exception as structured_error:
                 observer.add_warning(f"Structured generation failed: {structured_error}")
                 # Fallback to basic generation
-                ai_response, latency_ms = generate_completion(context, clean_query, sources)
+                ai_response, latency_ms = generate_completion(
+                    context,
+                    clean_query,
+                    sources,
+                    ticket_context=ticket_context,
+                    conversation_history=history_text,
+                )
                 confidence_breakdown = {}
                 base_confidence = 0.5  # Neutral confidence for fallback
 
@@ -1385,7 +1496,7 @@ def chat_with_ai(
 
         # Enhanced ai_runs logging with comprehensive metrics
         try:
-            prompt_hash = compute_prompt_hash(context, clean_query)
+            prompt_hash = compute_prompt_hash(context, clean_query, history_text)
             cursor.execute(
                 """
                 INSERT INTO app.ai_runs (

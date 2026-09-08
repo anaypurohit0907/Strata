@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request
 
 from app.tickets import (
     CHAT_COOLDOWN_SECONDS,
+    _get_conversation_context,
     chat_cooldown,
     fetch_chunks_by_faiss_ids,
     is_rep_in_org,
@@ -210,3 +211,140 @@ class TestTicketSchemas:
             RatingRequest(rating=0)
         with pytest.raises(Exception):
             RatingRequest(rating=6)
+
+
+# ── _get_conversation_context — chat history for AI context ─────────────────
+
+
+class _TwoQueryConn:
+    """Fake psycopg connection: 1st query returns ticket row, 2nd returns messages.
+
+    Emulates the WHERE/ORDER BY of the history query so the SQL predicates
+    are exercised: rows must be supplied newest-first (as ORDER BY
+    created_at DESC would return).
+    """
+
+    def __init__(self, ticket_row, message_rows):
+        self._ticket_row = ticket_row
+        self._message_rows = message_rows
+        self.queries: list[str] = []
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def execute(self, sql, params=None):
+                conn.queries.append(sql)
+
+            def fetchone(self):
+                return conn._ticket_row
+
+            def fetchall(self):
+                sql = conn.queries[-1] if conn.queries else ""
+                rows = conn._message_rows
+                if "sender_role IN" in sql:
+                    rows = [
+                        r
+                        for r in rows
+                        if r["sender_role"] in ("customer", "rep", "ai")
+                    ]
+                if "is_internal = false" in sql:
+                    rows = [r for r in rows if not r.get("is_internal")]
+                return rows
+
+        return _Cur()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+class TestGetConversationContext:
+    def test_happy_path(self):
+        conn = _TwoQueryConn(
+            {"title": "VPN broken", "description": "Cannot connect since Monday"},
+            [
+                {"sender_role": "customer", "body": "It still fails after reboot"},
+                {"sender_role": "ai", "body": "Try reinstalling the client"},
+                {"sender_role": "customer", "body": "Initial report: VPN broken"},
+                {"sender_role": "rep", "body": "Escalating to network team"},
+            ],
+        )
+        with patch("app.tickets.get_db_connection", return_value=conn):
+            ticket_ctx, history, prev_customer = _get_conversation_context("t1")
+        assert "Title: VPN broken" in ticket_ctx
+        assert "Cannot connect since Monday" in ticket_ctx
+        # chronological order after DESC-reversal: rep → initial → ai → follow-up
+        assert history.index("SUPPORT: Escalating") < history.index(
+            "CUSTOMER: Initial report"
+        )
+        assert history.index("CUSTOMER: Initial report") < history.index("AI: Try")
+        assert history.index("AI: Try") < history.index(
+            "CUSTOMER: It still fails"
+        )
+        assert prev_customer == "It still fails after reboot"
+
+    def test_internal_and_system_excluded(self):
+        conn = _TwoQueryConn(
+            {"title": "T", "description": None},
+            [
+                {"sender_role": "customer", "body": "hello"},
+                {
+                    "sender_role": "rep",
+                    "body": "internal note — salary issue",
+                    "is_internal": True,
+                },
+                {"sender_role": "system", "body": "[system] escalated"},
+            ],
+        )
+        with patch("app.tickets.get_db_connection", return_value=conn):
+            _, history, _ = _get_conversation_context("t1")
+        assert history == "CUSTOMER: hello"
+        assert "salary" not in history
+
+    def test_budget_drops_oldest(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.tickets.CHAT_HISTORY_MAX_CHARS", 120
+        )
+        conn = _TwoQueryConn(
+            {"title": "T", "description": None},
+            [
+                # newest first (ORDER BY created_at DESC): AI reply is latest
+                {"sender_role": "ai", "body": "y" * 100},
+                {"sender_role": "customer", "body": "x" * 100},
+            ],
+        )
+        with patch("app.tickets.get_db_connection", return_value=conn):
+            _, history, _ = _get_conversation_context("t1")
+        # newest message must survive, oldest dropped
+        assert "yyy" in history
+        assert "xxx" not in history
+
+    def test_db_failure_returns_empty(self):
+        with patch(
+            "app.tickets.get_db_connection",
+            side_effect=Exception("db down"),
+        ):
+            ticket_ctx, history, prev_customer = _get_conversation_context("t1")
+        assert ticket_ctx == ""
+        assert history == ""
+        assert prev_customer == ""
+
+    def test_no_description(self):
+        conn = _TwoQueryConn(
+            {"title": "Only title", "description": ""},
+            [],
+        )
+        with patch("app.tickets.get_db_connection", return_value=conn):
+            ticket_ctx, history, _ = _get_conversation_context("t1")
+        assert ticket_ctx == "Title: Only title"
+        assert "Description:" not in ticket_ctx
+        assert history == ""

@@ -188,10 +188,22 @@ def validate_response(text: str) -> Optional[GeminiResponse]:
 
 
 def generate_structured_completion(
-    context: str, question: str, sources: list[str]
+    context: str,
+    question: str,
+    sources: list[str],
+    ticket_context: str = "",
+    conversation_history: str = "",
 ) -> Tuple[GeminiResponse, int]:
+    extra_sections = ""
+    if ticket_context:
+        extra_sections += f"\nTICKET:\n{ticket_context}\n"
+    if conversation_history:
+        extra_sections += (
+            f"\nCONVERSATION SO FAR (oldest first; the USER QUESTION below "
+            f"is the latest turn):\n{conversation_history}\n"
+        )
     prompt = f"""{SYSTEM_PROMPT}
-
+{extra_sections}
 CONTEXT:
 {context}
 
@@ -217,15 +229,27 @@ RESPOND WITH VALID JSON ONLY:"""
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 time.sleep(15.0 if is_429 else RETRY_DELAY_SECONDS)
     logger.error("All structured attempts failed")
-    return generate_fallback_response(context, question, sources, start)
+    return generate_fallback_response(
+        context, question, sources, start, ticket_context, conversation_history
+    )
 
 
 def generate_fallback_response(
-    context: str, question: str, sources: list[str], start: float
+    context: str,
+    question: str,
+    sources: list[str],
+    start: float,
+    ticket_context: str = "",
+    conversation_history: str = "",
 ) -> Tuple[GeminiResponse, int]:
     try:
+        extra = ""
+        if ticket_context:
+            extra += f"\nTICKET:\n{ticket_context}\n"
+        if conversation_history:
+            extra += f"\nCONVERSATION SO FAR:\n{conversation_history}\n"
         text = _call_llm(
-            f"Answer concisely with [N] citations using this context:\n\n{context}\n\nQuestion: {question}",
+            f"Answer concisely with [N] citations using this context:\n{extra}\n\n{context}\n\nQuestion: {question}",
             json_mode=False,
         )
         fb = GeminiResponse(
@@ -280,18 +304,28 @@ def generate_fallback_response(
 
 
 def generate_completion(
-    context: str, question: str, sources: list[str]
+    context: str,
+    question: str,
+    sources: list[str],
+    ticket_context: str = "",
+    conversation_history: str = "",
 ) -> Tuple[str, int | None]:
     try:
-        structured, lat = generate_structured_completion(context, question, sources)
+        structured, lat = generate_structured_completion(
+            context, question, sources, ticket_context, conversation_history
+        )
         return structured.response, lat
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         return "Technical difficulties. Please contact support.", None
 
 
-def compute_prompt_hash(context: str, question: str) -> str:
-    return hashlib.sha256(f"{context}\n---\n{question}".encode()).hexdigest()[:16]
+def compute_prompt_hash(
+    context: str, question: str, conversation_history: str = ""
+) -> str:
+    return hashlib.sha256(
+        f"{conversation_history}\n---\n{context}\n---\n{question}".encode()
+    ).hexdigest()[:16]
 
 
 QUERY_EXPANSION_PROMPT = """Rewrite the user's support query into 2-3 alternative search queries that would
