@@ -62,6 +62,7 @@ interface MessageMeta {
   confidence?: number;
   suggest_escalation?: boolean;
   citations?: Citation[];
+  retrieval_metrics?: Record<string, number>;
 }
 
 interface CurrentUser {
@@ -873,6 +874,18 @@ export default function TicketDetailPage({
                           <div className="mb-2 p-2 bg-yellow-950/30 border border-yellow-800/50 rounded text-xs text-yellow-400 flex items-center gap-2">
                             <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
                             Low confidence — consider requesting human help.
+                          </div>
+                        )}
+
+                      {/* Degraded retrieval notice — AI provider was busy,
+                          query expansion gave up after retries */}
+                      {message.sender_role === 'ai' &&
+                        message.meta?.retrieval_metrics
+                          ?.query_expansion_degraded === 1 && (
+                          <div className="mb-2 p-2 bg-amber-950/30 border border-amber-800/50 rounded text-xs text-amber-400 flex items-center gap-2">
+                            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                            AI provider busy — search ran without query
+                            expansion, results may be limited.
                           </div>
                         )}
 

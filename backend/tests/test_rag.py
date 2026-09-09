@@ -180,13 +180,14 @@ class TestExpandQuery:
         assert "cannot log in" in out
         assert len(out) <= 3
 
-    def test_failure_returns_original_only(self):
-        from app.ai import expand_query
+    def test_failure_raises_expansion_error(self):
+        from app.ai import QueryExpansionError, expand_query
 
-        with patch("app.ai._call_llm", side_effect=RuntimeError("no key")):
-            out = expand_query("cant login")
-
-        assert out == ["cant login"]
+        with patch(
+            "app.ai._call_llm", side_effect=RuntimeError("no key")
+        ):
+            with pytest.raises(QueryExpansionError):
+                expand_query("cant login")
 
     def test_dedupes_and_caps(self):
         from app.ai import expand_query
@@ -197,13 +198,12 @@ class TestExpandQuery:
 
         assert out == ["cant login", "a", "b"]
 
-    def test_garbage_json_returns_original(self):
-        from app.ai import expand_query
+    def test_garbage_json_raises_expansion_error(self):
+        from app.ai import QueryExpansionError, expand_query
 
         with patch("app.ai._call_llm", return_value="not json at all"):
-            out = expand_query("cant login")
-
-        assert out == ["cant login"]
+            with pytest.raises(QueryExpansionError):
+                expand_query("cant login")
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -265,3 +265,88 @@ class TestAnswerCache:
 
     def test_ttl_constant(self):
         assert ANSWER_CACHE_TTL > 0
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# _call_llm_with_retry — provider-agnostic 429/5xx retries
+# ═════════════════════════════════════════════════════════════════════════
+
+
+def _http_status_error(status: int):
+    import httpx
+
+    req = httpx.Request("POST", "https://provider.example")
+    resp = httpx.Response(status, request=req, headers={"retry-after": "0"})
+    return httpx.HTTPStatusError(f"HTTP {status}", request=req, response=resp)
+
+
+class TestCallLLMWithRetry:
+    def test_retries_503_then_succeeds(self):
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = [
+                _http_status_error(503),
+                '{"queries": ["recovered"]}',
+            ]
+            with patch("app.ai.time.sleep") as mock_sleep:
+                out = _call_llm_with_retry("p", attempts=3)
+        assert out == '{"queries": ["recovered"]}'
+        assert mock_sleep.called
+
+    def test_retries_429_and_502(self):
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = [
+                _http_status_error(429),
+                _http_status_error(502),
+                "ok",
+            ]
+            with patch("app.ai.time.sleep"):
+                out = _call_llm_with_retry("p", attempts=3)
+        assert out == "ok"
+
+    def test_no_retry_on_400(self):
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = _http_status_error(400)
+            with pytest.raises(Exception):
+                with patch("app.ai.time.sleep") as mock_sleep:
+                    _call_llm_with_retry("p", attempts=3)
+        assert not mock_sleep.called
+
+    def test_exhausted_attempts_raises_last_error(self):
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = _http_status_error(503)
+            with patch("app.ai.time.sleep"):
+                with pytest.raises(Exception):
+                    _call_llm_with_retry("p", attempts=3)
+        assert mock_llm.call_count == 3
+
+    def test_timeout_errors_retry(self):
+        import httpx
+
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = [httpx.ReadTimeout("timeout"), "ok"]
+            with patch("app.ai.time.sleep"):
+                out = _call_llm_with_retry("p", attempts=3)
+        assert out == "ok"
+
+    def test_deadline_stops_retries(self):
+        import time as _time
+
+        from app.ai import _call_llm_with_retry
+
+        with patch("app.ai._call_llm") as mock_llm:
+            mock_llm.side_effect = _http_status_error(503)
+            with patch("app.ai.time.sleep"):
+                # deadline in the past → zero attempts allowed
+                with pytest.raises(Exception):
+                    _call_llm_with_retry("p", attempts=3, deadline=_time.time() - 100)
+        assert mock_llm.call_count == 0

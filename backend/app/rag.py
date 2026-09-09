@@ -503,6 +503,8 @@ def retrieve(
     Returns:
         (chunks, sources, context, scores, faiss_ids, retrieval_metrics)
     """
+    retrieval_metrics: Dict[str, float] = {}
+
     # 1) Query expansion — rewrite into alternate search queries (J.2)
     queries = [query]
     if os.getenv("RAG_QUERY_EXPANSION", "1") != "0":
@@ -511,7 +513,10 @@ def retrieve(
 
             queries = expand_query(query)
         except Exception as e:
-            logger.debug("Query expansion failed: %s", e)
+            # Degraded, not fatal — flag it so the UI can tell the user
+            logger.warning("Query expansion degraded: %s", e)
+            queries = [query]
+            retrieval_metrics["query_expansion_degraded"] = 1.0
 
     # 2) Embed all queries in one batch
     try:
@@ -602,7 +607,8 @@ def retrieve(
     # 8) Compute retrieval quality metrics (reuse cached chunk embeddings)
     _top = final_scores[0] if final_scores else 0.0
     _second = final_scores[1] if len(final_scores) >= 2 else _top
-    retrieval_metrics = {
+    retrieval_metrics.update(
+        {
         "context_relevance": compute_semantic_coherence(final_chunks, query_vector),
         "source_diversity": compute_diversity_score(final_chunks),
         "information_density": min(1.0, len(full_context) / MAX_CONTEXT_CHARS),
@@ -612,7 +618,8 @@ def retrieve(
         "chunks_returned": len(final_chunks),
         "query_intent": _intent_key,
         "queries_used": len(queries),
-    }
+        },
+    )
 
     # Clean up temporary embedding cache from chunk dicts before returning
     for c in final_chunks:

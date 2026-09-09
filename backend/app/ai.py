@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 MAX_RETRY_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2.0
 RETRY_DELAY_429_SECONDS = 8.0
+LLM_RETRY_ATTEMPTS = 3
+# HTTP statuses worth retrying — identical semantics across providers
+# (Google, OpenAI-compat, Groq, Anthropic all speak HTTP status codes)
+RETRYABLE_STATUS = {429, 500, 502, 503, 529}
 # Total wall-clock budget for structured + fallback generation. A provider
 # outage must not hold a worker thread for minutes — chat runs on a
 # bounded threadpool, so slow LLM ladders serialize all traffic.
@@ -99,6 +103,7 @@ def _detect_provider(model: str) -> str:
 
 
 def _call_llm(prompt: str, json_mode: bool = True, timeout_s: float = 30.0) -> str:
+    """Single LLM call — no retries. Use _call_llm_with_retry for 429/5xx."""
     model = gen_model()
     provider = _detect_provider(model)
     temp = temperature()
@@ -183,6 +188,55 @@ def _call_llm(prompt: str, json_mode: bool = True, timeout_s: float = 30.0) -> s
 # ── Response parsing ────────────────────────────────────────
 
 
+def _call_llm_with_retry(
+    prompt: str,
+    json_mode: bool = True,
+    timeout_s: float = 30.0,
+    attempts: int = LLM_RETRY_ATTEMPTS,
+    deadline: Optional[float] = None,
+) -> str:
+    """LLM call with 3 attempts on transient provider errors.
+
+    Retries 429 (rate limit) and 5xx (capacity — e.g. Google's 503s)
+    with exponential backoff (1s/2s/4s), honoring a Retry-After header
+    when the provider sends one. Provider-agnostic: every supported
+    provider signals these conditions via HTTP status codes. Raises
+    the last error when attempts are exhausted.
+    """
+    last_exc: Exception = RuntimeError("LLM call never attempted")
+    for attempt in range(attempts):
+        if deadline is not None and time.time() > deadline - 5:
+            logger.warning("LLM retry budget exhausted before attempt %d", attempt + 1)
+            break
+        try:
+            return _call_llm(prompt, json_mode=json_mode, timeout_s=timeout_s)
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status not in RETRYABLE_STATUS:
+                raise  # 400/401/403/404 — config or auth problem, don't retry
+            last_exc = e
+            logger.warning(
+                "LLM %s on attempt %d/%d (status %d)",
+                type(e).__name__, attempt + 1, attempts, status,
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_exc = e
+            logger.warning("LLM %s on attempt %d/%d", type(e).__name__, attempt + 1, attempts)
+
+        if attempt < attempts - 1:
+            backoff = float(2**attempt)
+            retry_after = None
+            resp = getattr(last_exc, "response", None)
+            if resp is not None:
+                retry_after = resp.headers.get("retry-after")
+            if retry_after and retry_after.replace(".", "").isdigit():
+                backoff = min(backoff, float(retry_after))
+            if deadline is not None:
+                backoff = min(backoff, max(0.0, deadline - time.time()))
+            time.sleep(backoff)
+    raise last_exc
+
+
 def validate_response(text: str) -> Optional[GeminiResponse]:
     try:
         cleaned = text.strip()
@@ -232,7 +286,9 @@ RESPOND WITH VALID JSON ONLY:"""
             logger.warning("Generation deadline hit before attempt %d", attempt + 1)
             break
         try:
-            text = _call_llm(prompt, json_mode=True)
+            text = _call_llm_with_retry(
+                prompt, json_mode=True, deadline=deadline
+            )
             validated = validate_response(text) if text else None
             if validated:
                 return validated, int((time.time() - start) * 1000)
@@ -279,9 +335,10 @@ def generate_fallback_response(
             extra += f"\nTICKET:\n{ticket_context}\n"
         if conversation_history:
             extra += f"\nCONVERSATION SO FAR:\n{conversation_history}\n"
-        text = _call_llm(
+        text = _call_llm_with_retry(
             f"Answer concisely with [N] citations using this context:\n{extra}\n\n{context}\n\nQuestion: {question}",
             json_mode=False,
+            deadline=deadline,
         )
         fb = GeminiResponse(
             response=text or "Unable to process your request.",
@@ -380,16 +437,23 @@ Respond with VALID JSON only, matching this exact schema:
 {"queries": ["original intent query", "alternative query", "alternative query"]}"""
 
 
+class QueryExpansionError(RuntimeError):
+    """Raised when query expansion fails after all retries."""
+
+
 def expand_query(query: str) -> List[str]:
     """
     Expand a user query into alternative search queries via one cheap LLM call.
-    Returns [original, ...alternatives] — on any failure returns [original] so
-    retrieval degrades gracefully.
+    Returns [original, ...alternatives].
+
+    Raises QueryExpansionError after 3 retry attempts so callers (retrieve)
+    can surface degraded-search state to the UI. Retries 429/5xx per
+    provider-agnostic HTTP semantics.
     """
     try:
         # Short timeout — expansion is optional; a hanging provider must
         # not delay retrieval by the full 30s
-        text = _call_llm(
+        text = _call_llm_with_retry(
             f"{QUERY_EXPANSION_PROMPT}\n\nUSER QUERY: {query}",
             json_mode=True,
             timeout_s=8.0,
@@ -412,8 +476,8 @@ def expand_query(query: str) -> List[str]:
                 out.append(alt)
         return out
     except Exception as e:
-        logger.warning("Query expansion failed (%s) — using original query", e)
-        return [query]
+        logger.warning("Query expansion failed (%s) — caller should degrade", e)
+        raise QueryExpansionError(str(e)) from e
 
 
 KB_DRAFT_PROMPT = """You are writing a knowledge base article for an internal IT knowledge base.
