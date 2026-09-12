@@ -39,7 +39,8 @@ describe('sanitizeRedirect', () => {
   });
 
   it('rejects paths carrying CRLF header injection', () => {
-    const crlfPayload = '/path' + String.fromCharCode(13, 10) + 'Set-Cookie: x=1';
+    const crlfPayload =
+      '/path' + String.fromCharCode(13, 10) + 'Set-Cookie: x=1';
     expect(sanitizeRedirect(crlfPayload)).toBe('/dashboard');
   });
 

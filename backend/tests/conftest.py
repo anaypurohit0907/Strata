@@ -29,9 +29,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 MOCK_DB = os.getenv("SKIP_MOCK_DB", "1") != "1"
 # Use a known good test secret for HS256
 TEST_JWT_SECRET = "test-secret-32-bytes-long-for-hs256-tests!!"
-os.environ.setdefault("SUPABASE_JWT_SECRET", TEST_JWT_SECRET)
-os.environ.setdefault("SUPABASE_URL", "https://test-project.supabase.co")
-os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "eyJtest-service-role-key")
+# Force (not setdefault): CI sets these to an empty string rather than
+# leaving them unset when no secret is configured (e.g. fork PRs, which
+# GitHub Actions never hands repo secrets to), and an empty string still
+# counts as "already set" — setdefault would silently keep it, breaking
+# both app.auth's required-env check and JWT signature verification
+# against TEST_JWT_SECRET below. Tests mock the Supabase client entirely,
+# so these values only need to be well-formed, never real.
+os.environ["SUPABASE_JWT_SECRET"] = TEST_JWT_SECRET
+os.environ["SUPABASE_URL"] = "https://test-project.supabase.co"
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "eyJtest-service-role-key"
 
 # Patch Supabase client creation globally — prevents auth.py module-level
 # SupabaseException when any test imports a module that depends on auth.
