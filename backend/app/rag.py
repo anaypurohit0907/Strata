@@ -609,15 +609,17 @@ def retrieve(
     _second = final_scores[1] if len(final_scores) >= 2 else _top
     retrieval_metrics.update(
         {
-        "context_relevance": compute_semantic_coherence(final_chunks, query_vector),
-        "source_diversity": compute_diversity_score(final_chunks),
-        "information_density": min(1.0, len(full_context) / MAX_CONTEXT_CHARS),
-        "top_score": _top,
-        "score_gap": _top - _second,
-        "score_variance": float(np.var(final_scores)) if len(final_scores) > 1 else 0.0,
-        "chunks_returned": len(final_chunks),
-        "query_intent": _intent_key,
-        "queries_used": len(queries),
+            "context_relevance": compute_semantic_coherence(final_chunks, query_vector),
+            "source_diversity": compute_diversity_score(final_chunks),
+            "information_density": min(1.0, len(full_context) / MAX_CONTEXT_CHARS),
+            "top_score": _top,
+            "score_gap": _top - _second,
+            "score_variance": (
+                float(np.var(final_scores)) if len(final_scores) > 1 else 0.0
+            ),
+            "chunks_returned": len(final_chunks),
+            "query_intent": _intent_key,
+            "queries_used": len(queries),
         },
     )
 

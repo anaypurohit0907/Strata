@@ -43,21 +43,21 @@ async def reembed(org_id: str | None = None) -> None:
                     (org_id,),
                 )
             else:
-                cur.execute(
-                    """
+                cur.execute("""
                     SELECT c.id, c.text
                     FROM app.chunks c
                     WHERE c.embedding_vec IS NULL
                     ORDER BY c.created_at
-                    """
-                )
+                    """)
             rows = cur.fetchall()
 
     if not rows:
         print("Nothing to re-embed — all chunks have vectors.")
         return
 
-    print(f"Re-embedding {len(rows)} chunk(s) with {os.getenv('EMBEDDING_MODEL', 'auto') or 'configured model'}...")
+    print(
+        f"Re-embedding {len(rows)} chunk(s) with {os.getenv('EMBEDDING_MODEL', 'auto') or 'configured model'}..."
+    )
 
     done = 0
     for i in range(0, len(rows), BATCH):

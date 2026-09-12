@@ -19,9 +19,7 @@ from app.organizations import (
     validate_slug,
     verify_org_permission,
 )
-
-from tests.conftest import TEST_ORG_ID, TEST_USER_ID, MockCursor, MockConn
-
+from tests.conftest import TEST_ORG_ID, TEST_USER_ID, MockConn, MockCursor
 
 # ═════════════════════════════════════════════════════════════════════════
 # validate_slug — pure function
@@ -113,17 +111,13 @@ class TestGenerateSlugFromName:
 class TestGetUserRoleInOrg:
     def test_returns_role_when_member(self):
         conn = MockConn(rows=[{"role": "admin"}])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             role = get_user_role_in_org(TEST_USER_ID, TEST_ORG_ID)
         assert role == "admin"
 
     def test_returns_none_when_not_member(self):
         conn = MockConn(rows=[])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             role = get_user_role_in_org(TEST_USER_ID, TEST_ORG_ID)
         assert role is None
 
@@ -136,32 +130,22 @@ class TestGetUserRoleInOrg:
 class TestVerifyOrgPermission:
     def test_valid_role_passes(self):
         conn = MockConn(rows=[{"role": "admin"}])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             # Should not raise
             verify_org_permission(TEST_USER_ID, TEST_ORG_ID, ["admin", "owner"])
 
     def test_not_member_raises_404(self):
         conn = MockConn(rows=[])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             with pytest.raises(HTTPException) as exc:
-                verify_org_permission(
-                    TEST_USER_ID, TEST_ORG_ID, ["admin", "owner"]
-                )
+                verify_org_permission(TEST_USER_ID, TEST_ORG_ID, ["admin", "owner"])
         assert exc.value.status_code == 404
 
     def test_insufficient_role_raises_403(self):
         conn = MockConn(rows=[{"role": "member"}])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             with pytest.raises(HTTPException) as exc:
-                verify_org_permission(
-                    TEST_USER_ID, TEST_ORG_ID, ["admin", "owner"]
-                )
+                verify_org_permission(TEST_USER_ID, TEST_ORG_ID, ["admin", "owner"])
         assert exc.value.status_code == 403
 
 
@@ -173,21 +157,18 @@ class TestVerifyOrgPermission:
 class TestCheckSlugAvailable:
     def test_available_slug(self):
         conn = MockConn(rows=[])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             assert check_slug_available("new-slug") is True
 
     def test_reserved_slug_unavailable(self):
         """First cursor.execute (reserved_slugs) returns a row."""
         conn = MockConn(rows=[{"exists": 1}])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ):
+        with patch("app.organizations.get_db_connection", return_value=conn):
             assert check_slug_available("admin") is False
 
     def test_existing_org_unavailable(self):
         """First cursor (reserved) returns None, second (orgs) returns a row."""
+
         # MockConn returns same rows for all cursor calls — need a custom cursor
         class MultiCursor:
             def __init__(self):
@@ -215,9 +196,7 @@ class TestCheckSlugAvailable:
             def __exit__(self, *a):
                 pass
 
-        with patch(
-            "app.organizations.get_db_connection", return_value=MultiConn()
-        ):
+        with patch("app.organizations.get_db_connection", return_value=MultiConn()):
             assert check_slug_available("taken-slug") is False
 
 
@@ -245,12 +224,15 @@ class TestCreateOrganizationEndpoint:
         }
 
         conn = MockConn(rows=[mock_org_row])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ), patch(
-            "app.organizations.check_slug_available", return_value=True
-        ), patch(
-            "app.roles.get_user_role", new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(return_value="admin")
+        with (
+            patch("app.organizations.get_db_connection", return_value=conn),
+            patch("app.organizations.check_slug_available", return_value=True),
+            patch(
+                "app.roles.get_user_role",
+                new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(
+                    return_value="admin"
+                ),
+            ),
         ):
             resp = await async_client.post(
                 "/api/organizations",
@@ -266,10 +248,14 @@ class TestCreateOrganizationEndpoint:
     @pytest.mark.asyncio
     async def test_create_org_reserved_slug(self, async_client, jwt_admin):
         """Reserved slug rejected with 409."""
-        with patch(
-            "app.organizations.check_slug_available", return_value=False
-        ), patch(
-            "app.roles.get_user_role", new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(return_value="admin")
+        with (
+            patch("app.organizations.check_slug_available", return_value=False),
+            patch(
+                "app.roles.get_user_role",
+                new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(
+                    return_value="admin"
+                ),
+            ),
         ):
             resp = await async_client.post(
                 "/api/organizations",
@@ -297,12 +283,15 @@ class TestCreateOrganizationEndpoint:
         }
 
         conn = MockConn(rows=[mock_org_row])
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ), patch(
-            "app.organizations.check_slug_available", return_value=True
-        ), patch(
-            "app.roles.get_user_role", new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(return_value="admin")
+        with (
+            patch("app.organizations.get_db_connection", return_value=conn),
+            patch("app.organizations.check_slug_available", return_value=True),
+            patch(
+                "app.roles.get_user_role",
+                new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(
+                    return_value="admin"
+                ),
+            ),
         ):
             resp = await async_client.post(
                 "/api/organizations",
@@ -336,10 +325,14 @@ class TestListOrganizationsEndpoint:
         ]
 
         conn = MockConn(rows=mock_rows)
-        with patch(
-            "app.organizations.get_db_connection", return_value=conn
-        ), patch(
-            "app.roles.get_user_role", new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(return_value="admin")
+        with (
+            patch("app.organizations.get_db_connection", return_value=conn),
+            patch(
+                "app.roles.get_user_role",
+                new=__import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(
+                    return_value="admin"
+                ),
+            ),
         ):
             resp = await async_client.get(
                 "/api/organizations",

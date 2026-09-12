@@ -22,6 +22,14 @@ module.exports = {
     'src/contexts/**/*.{ts,tsx}',
     'src/hooks/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
+    // Next.js server/edge SDK wrappers — not meaningfully unit-testable in
+    // jsdom (need next/headers, next/server, real cookies) and carry no
+    // branching logic of our own.
+    '!src/lib/supabase/server.ts',
+    '!src/lib/supabase/middleware.ts',
+    '!src/lib/supabase/client.ts',
+    // Pure design-token constants, no logic to cover.
+    '!src/lib/chartTheme.ts',
   ],
   coverageThreshold: {
     global: {

@@ -25,7 +25,6 @@ from app.tickets import (
     _answer_cache,
     invalidate_answer_cache,
 )
-
 from tests.conftest import TEST_ORG_ID
 
 
@@ -138,6 +137,7 @@ class TestHybridSearch:
 
     def test_lexical_failure_degrades_to_vector_only(self):
         """When tsvector/trgm queries raise, vector results still return."""
+
         class RaisingCursor:
             def execute(self, query, params=None):
                 if "websearch_to_tsquery" in query:
@@ -183,9 +183,7 @@ class TestExpandQuery:
     def test_failure_raises_expansion_error(self):
         from app.ai import QueryExpansionError, expand_query
 
-        with patch(
-            "app.ai._call_llm", side_effect=RuntimeError("no key")
-        ):
+        with patch("app.ai._call_llm", side_effect=RuntimeError("no key")):
             with pytest.raises(QueryExpansionError):
                 expand_query("cant login")
 

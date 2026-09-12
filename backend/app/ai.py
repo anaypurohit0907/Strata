@@ -217,11 +217,16 @@ def _call_llm_with_retry(
             last_exc = e
             logger.warning(
                 "LLM %s on attempt %d/%d (status %d)",
-                type(e).__name__, attempt + 1, attempts, status,
+                type(e).__name__,
+                attempt + 1,
+                attempts,
+                status,
             )
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_exc = e
-            logger.warning("LLM %s on attempt %d/%d", type(e).__name__, attempt + 1, attempts)
+            logger.warning(
+                "LLM %s on attempt %d/%d", type(e).__name__, attempt + 1, attempts
+            )
 
         if attempt < attempts - 1:
             backoff = float(2**attempt)
@@ -286,9 +291,7 @@ RESPOND WITH VALID JSON ONLY:"""
             logger.warning("Generation deadline hit before attempt %d", attempt + 1)
             break
         try:
-            text = _call_llm_with_retry(
-                prompt, json_mode=True, deadline=deadline
-            )
+            text = _call_llm_with_retry(prompt, json_mode=True, deadline=deadline)
             validated = validate_response(text) if text else None
             if validated:
                 return validated, int((time.time() - start) * 1000)

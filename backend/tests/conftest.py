@@ -8,14 +8,14 @@ a real connection (requires DATABASE_URL + DATABASE_PASSWORD in .env).
 
 from __future__ import annotations
 
+import json
 import os
 import sys
-import json
 import time
 import uuid as uuid_lib
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any, AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -35,7 +35,9 @@ os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "eyJtest-service-role-key")
 
 # Patch Supabase client creation globally — prevents auth.py module-level
 # SupabaseException when any test imports a module that depends on auth.
-from unittest.mock import MagicMock, patch as _patch
+from unittest.mock import MagicMock
+from unittest.mock import patch as _patch
+
 _supabase_patcher = _patch("supabase.create_client", return_value=MagicMock())
 _supabase_patcher.start()
 TEST_USER_ID = "36615d00-04dd-4306-bb5b-3adef716b4c9"
@@ -193,7 +195,9 @@ def mock_asyncpg(monkeypatch) -> MagicMock:
 async def async_client():
     """Provide a test client for the FastAPI app (async)."""
     from httpx import ASGITransport, AsyncClient
+
     from app.main import app
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

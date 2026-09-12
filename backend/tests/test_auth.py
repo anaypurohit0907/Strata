@@ -19,6 +19,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException, Request
 from starlette.datastructures import Headers
 
+from app.auth import User, _build_ec_key, get_current_user, verify_supabase_jwt
+from app.org_middleware import (
+    OrganizationContextMiddleware,
+    check_org_permission,
+    require_org_context,
+    require_org_role,
+)
 from tests.conftest import (
     TEST_JWT_SECRET,
     TEST_ORG_ID,
@@ -27,15 +34,6 @@ from tests.conftest import (
     make_invalid_sig_jwt,
     make_jwt,
 )
-
-from app.auth import User, _build_ec_key, get_current_user, verify_supabase_jwt
-from app.org_middleware import (
-    OrganizationContextMiddleware,
-    check_org_permission,
-    require_org_context,
-    require_org_role,
-)
-
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -58,9 +56,7 @@ def _build_request(
         "method": method,
         "path": path,
         "query_string": b"",
-        "headers": [
-            (k.lower().encode(), v.encode()) for k, v in headers.items()
-        ],
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
     }
     return Request(scope)
 
@@ -70,12 +66,16 @@ def _ec_keypair_and_jwk(kid: str = "test-kid"):
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_numbers = private_key.public_key().public_numbers()
     # Unpadded big-endian bytes, base64url
-    x_b64 = base64.urlsafe_b64encode(
-        public_numbers.x.to_bytes(32, "big")
-    ).rstrip(b"=").decode()
-    y_b64 = base64.urlsafe_b64encode(
-        public_numbers.y.to_bytes(32, "big")
-    ).rstrip(b"=").decode()
+    x_b64 = (
+        base64.urlsafe_b64encode(public_numbers.x.to_bytes(32, "big"))
+        .rstrip(b"=")
+        .decode()
+    )
+    y_b64 = (
+        base64.urlsafe_b64encode(public_numbers.y.to_bytes(32, "big"))
+        .rstrip(b"=")
+        .decode()
+    )
     jwk = {"kty": "EC", "crv": "P-256", "x": x_b64, "y": y_b64, "kid": kid}
     return private_key, jwk
 
@@ -143,9 +143,11 @@ class TestVerifySupabaseJWTHS256:
         raw_token = jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
         # Tamper with the header alg field by rebuilding
         header_b64, payload_b64, sig = raw_token.split(".")
-        bad_header = base64.urlsafe_b64encode(
-            b'{"alg":"RS256","typ":"JWT"}'
-        ).rstrip(b"=").decode()
+        bad_header = (
+            base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}')
+            .rstrip(b"=")
+            .decode()
+        )
         bad_token = f"{bad_header}.{payload_b64}.{sig}"
         with pytest.raises(HTTPException) as exc:
             await verify_supabase_jwt(bad_token)
@@ -213,7 +215,9 @@ class TestVerifySupabaseJWTES256:
 
         # JWKS returns a DIFFERENT kid — no match
         _, other_jwk = _ec_keypair_and_jwk(kid="key-2")
-        with patch("app.auth._fetch_jwks", new_callable=AsyncMock, return_value=[other_jwk]):
+        with patch(
+            "app.auth._fetch_jwks", new_callable=AsyncMock, return_value=[other_jwk]
+        ):
             with pytest.raises(HTTPException) as exc:
                 await verify_supabase_jwt(token)
         assert exc.value.status_code == 401
@@ -322,9 +326,7 @@ class TestOrgMiddlewareExtractUserId:
 
     @pytest.mark.asyncio
     async def test_invalid_signature_returns_none(self):
-        request = _build_request(
-            auth_header=f"Bearer {make_invalid_sig_jwt()}"
-        )
+        request = _build_request(auth_header=f"Bearer {make_invalid_sig_jwt()}")
         assert await self.middleware._extract_user_id_from_token(request) is None
 
     @pytest.mark.asyncio
@@ -549,9 +551,7 @@ class TestGetUserRoleInOrg:
             side_effect=RuntimeError("DB down"),
         ):
             with pytest.raises(RuntimeError):
-                await self.middleware._get_user_role_in_org(
-                    TEST_USER_ID, TEST_ORG_ID
-                )
+                await self.middleware._get_user_role_in_org(TEST_USER_ID, TEST_ORG_ID)
 
 
 # ═════════════════════════════════════════════════════════════════════════

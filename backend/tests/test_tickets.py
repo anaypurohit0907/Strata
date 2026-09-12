@@ -20,9 +20,7 @@ from app.tickets import (
     fetch_chunks_by_faiss_ids,
     is_rep_in_org,
 )
-
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, MockConn, MockCursor
-
 
 # ═════════════════════════════════════════════════════════════════════════
 # is_rep_in_org — pure function
@@ -135,9 +133,27 @@ class TestFetchChunksByFaissIds:
 
     def test_multiple_chunks(self):
         mock_chunks = [
-            {"chunk_id": "c1", "doc_id": "d1", "text": "A", "faiss_id": 0, "title": "D1"},
-            {"chunk_id": "c2", "doc_id": "d1", "text": "B", "faiss_id": 1, "title": "D1"},
-            {"chunk_id": "c3", "doc_id": "d2", "text": "C", "faiss_id": 2, "title": "D2"},
+            {
+                "chunk_id": "c1",
+                "doc_id": "d1",
+                "text": "A",
+                "faiss_id": 0,
+                "title": "D1",
+            },
+            {
+                "chunk_id": "c2",
+                "doc_id": "d1",
+                "text": "B",
+                "faiss_id": 1,
+                "title": "D1",
+            },
+            {
+                "chunk_id": "c3",
+                "doc_id": "d2",
+                "text": "C",
+                "faiss_id": 2,
+                "title": "D2",
+            },
         ]
         conn = MockConn(rows=mock_chunks)
         with patch("app.tickets.get_db_connection", return_value=conn):
@@ -250,9 +266,7 @@ class _TwoQueryConn:
                 rows = conn._message_rows
                 if "sender_role IN" in sql:
                     rows = [
-                        r
-                        for r in rows
-                        if r["sender_role"] in ("customer", "rep", "ai")
+                        r for r in rows if r["sender_role"] in ("customer", "rep", "ai")
                     ]
                 if "is_internal = false" in sql:
                     rows = [r for r in rows if not r.get("is_internal")]
@@ -287,9 +301,7 @@ class TestGetConversationContext:
             "CUSTOMER: Initial report"
         )
         assert history.index("CUSTOMER: Initial report") < history.index("AI: Try")
-        assert history.index("AI: Try") < history.index(
-            "CUSTOMER: It still fails"
-        )
+        assert history.index("AI: Try") < history.index("CUSTOMER: It still fails")
         assert prev_customer == "It still fails after reboot"
 
     def test_internal_and_system_excluded(self):
@@ -311,9 +323,7 @@ class TestGetConversationContext:
         assert "salary" not in history
 
     def test_budget_drops_oldest(self, monkeypatch):
-        monkeypatch.setattr(
-            "app.tickets.CHAT_HISTORY_MAX_CHARS", 120
-        )
+        monkeypatch.setattr("app.tickets.CHAT_HISTORY_MAX_CHARS", 120)
         conn = _TwoQueryConn(
             {"title": "T", "description": None},
             [
