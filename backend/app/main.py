@@ -341,6 +341,53 @@ async def _pool_keepalive():
             logger.warning("[keepalive] pool ping failed: %s", type(exc).__name__)
 
 
+async def _casper_agent_scan_loop():
+    """
+    CASPER Proactive Intelligence — runs every 60 minutes.
+    Scans all active orgs and generates/refreshes typed insights:
+    warranty alerts, license waste, depreciation milestones, repair ROI, idle assets.
+    """
+    import threading
+
+    from .casper.asset_intelligence import run_all_agents_for_org
+
+    # Initial delay — let the server fully start before first scan
+    await asyncio.sleep(30)
+
+    while True:
+        try:
+            from .db import get_connection
+
+            conn = await get_connection()
+            try:
+                org_rows = await conn.fetch(
+                    "SELECT id FROM app.organizations WHERE is_active = true"
+                )
+                org_ids = [str(r["id"]) for r in org_rows]
+            finally:
+                await conn.close()
+
+            logger.info("[CASPER agent] Starting scan for %d org(s)", len(org_ids))
+
+            def _scan_all():
+                for org_id in org_ids:
+                    try:
+                        run_all_agents_for_org(org_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "[CASPER agent] Scan failed for org %s: %s", org_id, exc
+                        )
+
+            # Run in thread so we don't block the event loop
+            await asyncio.get_event_loop().run_in_executor(None, _scan_all)
+            logger.info("[CASPER agent] Scan complete for %d org(s)", len(org_ids))
+
+        except Exception as exc:
+            logger.error("[CASPER agent] Scan loop error: %s", exc)
+
+        await asyncio.sleep(60 * 60)  # re-scan every hour
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     from .db import close_pool, init_pool
@@ -368,12 +415,68 @@ async def lifespan(_app: FastAPI):
     # pgvector indices live in the database — no cold-start rebuild needed.
     # (FAISS on-disk indices were wiped on every deploy; pgvector persists with the table.)
 
+    # Initialise CASPER Foundation Layer — tool registry + entity namespaces
+    try:
+        from .casper import casper_engine
+        from .casper.correlator import EntityNamespace
+
+        casper_engine.startup()
+
+        # Register AssetLog namespace for cross-ticket correlation
+        def _search_assets(q_emb, org_id, top_k):
+            from .db_sync import get_db_connection
+            from .store import search_org_vectors
+
+            scores_raw, ids_raw = search_org_vectors(org_id, q_emb, k=top_k * 3)
+            hits = [
+                (float(s), int(fid))
+                for s, fid in zip(scores_raw, ids_raw)
+                if s >= 0.3 and fid >= 0
+            ]
+            if not hits:
+                return []
+            faiss_ids = [fid for _, fid in hits[: top_k * 2]]
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT ee.faiss_id, a.id, a.name, a.asset_tag, a.category,
+                           a.specs->>'serial_number' AS serial
+                    FROM app.entity_embeddings ee
+                    JOIN app.assets a ON a.id = ee.entity_id
+                    WHERE ee.organization_id = %s AND ee.entity_type = 'asset'
+                      AND ee.faiss_id = ANY(%s)
+                """,
+                    (org_id, faiss_ids),
+                )
+                rows = cur.fetchall()
+            score_map = {fid: s for s, fid in hits}
+            return [
+                {
+                    "id": str(r["id"]),
+                    "label": f"{r['name']} ({r['asset_tag']})",
+                    "score": score_map.get(r["faiss_id"], 0.3),
+                    "snippet": f"{r['category']} · SN:{r.get('serial') or 'N/A'}",
+                }
+                for r in rows
+            ][:top_k]
+
+        casper_engine.correlator.register_namespace(
+            EntityNamespace(
+                name="asset",
+                search_fn=_search_assets,
+            )
+        )
+    except Exception as exc:
+        logger.warning("[startup] CASPEREngine startup failed (non-fatal): %s", exc)
+
     task = asyncio.create_task(_overdue_task())
     keepalive = asyncio.create_task(_pool_keepalive())
+    agent_task = asyncio.create_task(_casper_agent_scan_loop())
     yield
-    task.cancel()
-    keepalive.cancel()
-    for t in (task, keepalive):
+    for t in (task, keepalive, agent_task):
+        t.cancel()
+    for t in (task, keepalive, agent_task):
         try:
             await t
         except asyncio.CancelledError:
@@ -428,20 +531,33 @@ cors_config = (
 app.add_middleware(CORSMiddleware, **cors_config)
 
 from .admin import router as admin_router
+from .assets import router as assets_router
 
 # Import and mount routers
 from .auth import router as auth_router
+from .billing import router as billing_router
 from .canned_responses import router as canned_responses_router
+from .casper.query import router as casper_query_router
+from .changeboard import router as changeboard_router
+from .contractvault import router as contractvault_router
+from .costlens import router as costlens_router
 from .custom_fields import router as custom_fields_router
 from .entitlements_router import router as entitlements_router
 from .feedback import router as feedback_router
+from .flowbot import router as flowbot_router
+from .incidentbridge import router as incidentbridge_router
 from .invites import router as invites_router
 from .kb import router as kb_router
+from .knowbase import router as knowbase_router
 from .notifications import router as notifications_router
 from .organizations import router as organizations_router
+from .patchwatch import router as patchwatch_router
+from .procureflow import router as procureflow_router
 from .rep import router as rep_router
 from .reports import router as reports_router
+from .servicehub import router as servicehub_router
 from .sla import router as sla_router
+from .statuscast import router as statuscast_router
 from .tickets import router as tickets_router
 
 app.include_router(auth_router)
@@ -458,6 +574,25 @@ app.include_router(sla_router)
 app.include_router(canned_responses_router)
 app.include_router(custom_fields_router)
 app.include_router(entitlements_router)
+app.include_router(knowbase_router)
+app.include_router(billing_router)
+app.include_router(assets_router)
+app.include_router(contractvault_router)
+app.include_router(costlens_router)
+app.include_router(procureflow_router)
+app.include_router(patchwatch_router)
+app.include_router(changeboard_router)
+app.include_router(servicehub_router)
+app.include_router(flowbot_router)
+app.include_router(incidentbridge_router)
+app.include_router(statuscast_router)
+app.include_router(casper_query_router)
+
+from .api_keys import router as api_keys_router
+from .portal import router as portal_router
+
+app.include_router(portal_router)
+app.include_router(api_keys_router)
 
 
 @app.get("/api/health")

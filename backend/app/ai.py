@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -38,6 +38,11 @@ class Citation(BaseModel):
     relevance_score: float
 
 
+class CASPERToolCall(BaseModel):
+    tool: str
+    params: Dict[str, Any]
+
+
 class GeminiResponse(BaseModel):
     response: str
     citations_used: list[Citation]
@@ -45,6 +50,7 @@ class GeminiResponse(BaseModel):
     escalation_signals: Dict[str, Any]
     retrieval_quality: Dict[str, float]
     reasoning_trace: Optional[str] = None
+    tool_calls: Optional[List[CASPERToolCall]] = None
 
 
 SYSTEM_PROMPT = """You are TicketPilot AI, a friendly and expert customer support assistant.
@@ -264,6 +270,7 @@ def generate_structured_completion(
     sources: list[str],
     ticket_context: str = "",
     conversation_history: str = "",
+    tool_schemas: Optional[List[Dict]] = None,
 ) -> Tuple[GeminiResponse, int]:
     extra_sections = ""
     if ticket_context:
@@ -273,6 +280,17 @@ def generate_structured_completion(
             f"\nCONVERSATION SO FAR (oldest first; the USER QUESTION below "
             f"is the latest turn):\n{conversation_history}\n"
         )
+    if tool_schemas:
+        schemas_json = json.dumps(tool_schemas, indent=2)
+        extra_sections += f"""
+AVAILABLE CASPER TOOLS (call only when genuinely helpful):
+{schemas_json}
+
+To call a tool, include it in the "tool_calls" array:
+  "tool_calls": [{{"tool": "tool_name", "params": {{...}}}}]
+
+Leave "tool_calls" as [] when no action is needed.
+"""
     prompt = f"""{SYSTEM_PROMPT}
 {extra_sections}
 CONTEXT:
@@ -515,3 +533,84 @@ def generate_kb_draft(conversation: str) -> Tuple[str, str]:
     except Exception as e:
         logger.error("KB draft generation failed: %s", e)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Groq streaming fast-path — powers POST /tickets/{id}/chat/stream (SSE).
+#
+# Kept independent from the provider-agnostic pipeline above: that pipeline
+# is admin-configurable (any of Gemini/OpenAI-compat/Jina, resolved from DB)
+# and returns a single completed response, but none of those providers'
+# streaming wire formats are wired up here yet. This is an optional bonus
+# fast path — active only when GROQ_API_KEY is set — not a replacement for
+# the main generation pipeline.
+# ---------------------------------------------------------------------------
+
+_GROQ_STREAM_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_STREAM_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+_GROQ_STREAM_TEMPERATURE = float(os.getenv("GENAI_TEMPERATURE", "0.2"))
+_GROQ_STREAM_MAX_OUTPUT_TOKENS = int(os.getenv("GENAI_MAX_OUTPUT_TOKENS", "1024"))
+
+_STREAM_PROMPT = """You are CASPER, the AI assistant for TicketPilot — the smartest IT support desk for SMEs.
+Answer using ONLY the context below. Be direct, practical, and SME-friendly.
+Use [N] citation markers (e.g. [1], [2]) for every factual claim.
+
+CONTEXT:
+{context}
+
+SOURCES:
+{sources}
+
+QUESTION: {question}
+
+Answer:"""
+
+
+def _get_groq_api_key() -> str:
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("GROQ_API_KEY is required in environment")
+    return key
+
+
+def stream_groq_completion(
+    context: str, question: str, sources: list[str]
+) -> Iterator[str]:
+    """Yield text tokens from Groq's streaming API. Plain text — no JSON mode."""
+    api_key = _get_groq_api_key()
+    prompt = _STREAM_PROMPT.format(
+        context=context,
+        sources="\n".join(sources),
+        question=question,
+    )
+    payload: Dict[str, Any] = {
+        "model": _GROQ_STREAM_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": _GROQ_STREAM_TEMPERATURE,
+        "max_tokens": _GROQ_STREAM_MAX_OUTPUT_TOKENS,
+        "stream": True,
+    }
+    with httpx.stream(
+        "POST",
+        _GROQ_STREAM_API_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60.0,
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data.strip() == "[DONE]":
+                return
+            try:
+                chunk = json.loads(data)
+                token = chunk["choices"][0]["delta"].get("content", "")
+                if token:
+                    yield token
+            except (json.JSONDecodeError, KeyError):
+                continue

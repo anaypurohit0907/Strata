@@ -1,15 +1,19 @@
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from .ai_settings import gen_model
 from .auth import User, get_current_user
+from .casper import casper_engine
 from .db_sync import get_db_connection
 from .email import (
     send_ai_failure_email,
@@ -231,21 +235,8 @@ def create_ticket(
                 except Exception:
                     pass
 
-        # 5) CASPER-driven auto-assignment — always runs, no admin gate needed
+        # 5) CASPEREngine — profile, route, correlate, embed (all AI operations via engine)
         try:
-            # Build CASPER profile from title + description
-            casper_profile = profile_ticket(payload.title, payload.description or "")
-
-            # Set CASPER-suggested priority_level if the ticket doesn't have one
-            if not ticket_row.get("priority_level"):
-                cursor.execute(
-                    "UPDATE app.tickets SET priority_level = %s WHERE id = %s",
-                    (casper_profile.suggested_priority_level, ticket_id),
-                )
-                ticket_row = dict(ticket_row)
-                ticket_row["priority_level"] = casper_profile.suggested_priority_level
-
-            # Fetch all reps/admins with current load for CASPER routing
             cursor.execute(
                 """
                 SELECT om.user_id::text, au.email, ur.role,
@@ -265,15 +256,34 @@ def create_ticket(
             )
             reps = cursor.fetchall()
 
-            best = casper_route(casper_profile, [dict(r) for r in reps])
-            if best:
+            ai_result = casper_engine.process_ticket_creation(
+                ticket_id=str(ticket_id),
+                title=payload.title,
+                description=payload.description or "",
+                org_id=org_id,
+                reps=[dict(r) for r in reps],
+                db_cursor=cursor,
+                user_id=str(user.id),
+            )
+
+            # Apply priority from CASPER
+            if not ticket_row.get("priority_level"):
+                cursor.execute(
+                    "UPDATE app.tickets SET priority_level = %s WHERE id = %s",
+                    (ai_result.priority_level, ticket_id),
+                )
+                ticket_row = dict(ticket_row)
+                ticket_row["priority_level"] = ai_result.priority_level
+
+            # Apply routing from CASPER
+            if ai_result.suggested_assignee_id:
                 cursor.execute(
                     "UPDATE app.tickets SET assignee_id = %s WHERE id = %s",
-                    (best["user_id"], ticket_id),
+                    (ai_result.suggested_assignee_id, ticket_id),
                 )
                 routing_note = (
-                    f"[system] CASPER assigned to {best['email']} "
-                    f"({casper_profile.routing_reason})"
+                    f"[system] CASPER assigned to {ai_result.suggested_assignee_email} "
+                    f"({ai_result.routing_reason})"
                 )
                 cursor.execute(
                     """
@@ -288,13 +298,46 @@ def create_ticket(
                     (ticket_id,),
                 )
                 ticket_row = dict(ticket_row)
-                ticket_row["assignee_id"] = best["user_id"]
+                ticket_row["assignee_id"] = ai_result.suggested_assignee_id
+
+            _assignee_id = ai_result.suggested_assignee_id
+
+            # Persist correlation results
+            if ai_result.correlated_entities:
+                for ent in ai_result.correlated_entities[:5]:
+                    try:
+                        cursor.execute(
+                            """INSERT INTO app.casper_correlations
+                                   (organization_id, source_type, source_id,
+                                    target_type, target_id, target_label, score, snippet)
+                               VALUES (%s, 'ticket', %s, %s, %s, %s, %s, %s)
+                               ON CONFLICT DO NOTHING""",
+                            (
+                                org_id,
+                                str(ticket_id),
+                                ent.namespace,
+                                ent.entity_id,
+                                ent.label[:100],
+                                ent.score,
+                                ent.snippet[:200],
+                            ),
+                        )
+                    except Exception:
+                        pass
+
         except Exception:
-            pass  # CASPER routing failure never blocks ticket creation
+            pass  # CASPER failure never blocks ticket creation
 
         conn.commit()
 
-        # Audit log (fire-and-forget)
+        # FlowBot — evaluate ticket_created rules (synchronous, fast at SME scale)
+        try:
+            from .flowbot import evaluate_rules as _flowbot
+
+            _flowbot("ticket_created", dict(ticket_row), org_id)
+        except Exception:
+            pass
+
         try:
             from .admin import log_audit_sync
 
@@ -395,6 +438,56 @@ def create_ticket(
             expected_resolve_at=ticket_row.get("expected_resolve_at"),
             customer_email=ticket_owner_email,
         )
+
+
+@router.get("/tickets/platform-stats")
+def ticket_platform_stats(request: Request, user: User = Depends(get_current_user)):
+    """Stats for the Strata Platform Hub card."""
+    org_id = require_org_context(request)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Try materialized view first, fall back to direct query
+            try:
+                cur.execute(
+                    """
+                    SELECT status, ticket_count, urgent_count, overdue_count
+                    FROM app.mv_ticket_counts WHERE organization_id = %s
+                """,
+                    (org_id,),
+                )
+                rows = cur.fetchall()
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, r)) for r in rows]
+            except Exception:
+                conn.rollback()
+                cur.execute(
+                    """
+                    SELECT status,
+                           COUNT(*) AS ticket_count,
+                           COUNT(*) FILTER (WHERE priority = 'urgent') AS urgent_count,
+                           COUNT(*) FILTER (WHERE is_overdue = true) AS overdue_count
+                    FROM app.tickets
+                    WHERE organization_id = %s
+                    GROUP BY status
+                """,
+                    (org_id,),
+                )
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    closed = {"resolved", "closed"}
+    open_count = sum(r["ticket_count"] for r in rows if r["status"] not in closed)
+    overdue = sum(r["overdue_count"] for r in rows)
+    urgent = sum(r["urgent_count"] for r in rows if r["status"] not in closed)
+    health = "critical" if overdue > 0 else ("warning" if urgent > 0 else "healthy")
+
+    stats = [f"{open_count} open ticket{'s' if open_count != 1 else ''}"]
+    if overdue:
+        stats.append(f"{overdue} overdue")
+    if urgent:
+        stats.append(f"{urgent} urgent")
+
+    return {"stats": stats, "health": health}
 
 
 @router.get("/tickets", response_model=TicketListResponse)
@@ -660,6 +753,58 @@ def get_messages(
         ]
 
 
+@router.get("/tickets/{ticket_id}/correlations")
+def get_ticket_correlations(
+    ticket_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """Return cross-entity entities correlated to this ticket via CASPER."""
+    org_id = require_org_context(request)
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT title, description FROM app.tickets WHERE id = %s AND organization_id = %s",
+            (ticket_id, org_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+    try:
+        import numpy as np
+
+        from .casper import casper_engine
+        from .embeddings import embed_texts
+
+        text = f"{row['title']} {row['description'] or ''}"
+        q_emb = embed_texts([text])[0]
+        entities = casper_engine.correlator.correlate(
+            query_embedding=q_emb,
+            org_id=org_id,
+            top_k_per_namespace=3,
+        )
+        # Exclude kb_chunk (already shown in chat), exclude same ticket
+        filtered = [
+            {
+                "namespace": e.namespace,
+                "entity_id": e.entity_id,
+                "label": e.label,
+                "score": round(e.score, 4),
+                "snippet": e.snippet,
+                "href": e.metadata.get("href", ""),
+                "entity_type": e.metadata.get("entity_type", e.namespace),
+            }
+            for e in entities
+            if e.namespace != "kb_chunk" and e.entity_id != ticket_id
+        ]
+        return {"correlations": filtered}
+    except Exception as exc:
+        logger.warning("Correlation lookup failed for ticket %s: %s", ticket_id, exc)
+        return {"correlations": []}
+
+
 @router.post(
     "/tickets/{ticket_id}/messages",
     response_model=MessageOut,
@@ -740,6 +885,16 @@ def post_message(
             )
 
         conn.commit()
+
+        # FlowBot — message_added
+        try:
+            from .flowbot import evaluate_rules as _flowbot
+
+            _flowbot(
+                "message_added", {"id": ticket_id, "organization_id": org_id}, org_id
+            )
+        except Exception:
+            pass
 
         # Email notifications (fire-and-forget)
         import threading
@@ -841,6 +996,55 @@ CHAT_COOLDOWN_SECONDS = int(os.getenv("CHAT_COOLDOWN_SECONDS", "8"))
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.55"))
 CONFIDENCE_MIN_CHUNKS = int(os.getenv("CONFIDENCE_MIN_CHUNKS", "2"))
 
+# Semantic response cache — per-org, in-memory. Powers the /chat/stream
+# fast-path (semantic similarity match); the exact-hash _answer_cache below
+# backs the regular /chat endpoint. Different strategies, different callers,
+# both kept.
+# Each entry: {"emb": np.ndarray, "answer": str, "ts": float}
+_response_cache: Dict[str, list] = {}
+_response_cache_lock = threading.Lock()
+_CACHE_TTL = int(os.getenv("RESPONSE_CACHE_TTL", "3600"))  # 1 hour
+_CACHE_MAX = int(os.getenv("RESPONSE_CACHE_MAX", "200"))  # LRU per org
+_CACHE_SIM = float(os.getenv("RESPONSE_CACHE_SIM", "0.95"))  # cosine threshold
+_CACHE_MINC = 0.5  # min confidence to store
+
+
+def _cache_lookup(org_id: str, q_emb: np.ndarray) -> Optional[str]:
+    """Return a cached answer if a semantically similar query exists within TTL."""
+    with _response_cache_lock:
+        entries = list(_response_cache.get(org_id, []))
+    if not entries:
+        return None
+    now = time.time()
+    valid = [e for e in entries if now - e["ts"] < _CACHE_TTL]
+    if not valid:
+        return None
+    embs = np.array([e["emb"] for e in valid])  # (N, D)
+    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+    q_norm = np.linalg.norm(q_emb)
+    if q_norm == 0:
+        return None
+    embs_u = embs / np.where(norms > 0, norms, 1.0)
+    sims = embs_u @ (q_emb / q_norm)  # cosine per entry
+    best = int(np.argmax(sims))
+    if float(sims[best]) >= _CACHE_SIM:
+        return valid[best]["answer"]
+    return None
+
+
+def _cache_store(org_id: str, q_emb: np.ndarray, answer: str, confidence: float):
+    """Store a query-answer pair; evicts expired entries and oldest on overflow."""
+    if confidence < _CACHE_MINC or not answer:
+        return
+    now = time.time()
+    with _response_cache_lock:
+        entries = _response_cache.setdefault(org_id, [])
+        entries[:] = [e for e in entries if now - e["ts"] < _CACHE_TTL]
+        if len(entries) >= _CACHE_MAX:
+            entries.pop(0)
+        entries.append({"emb": q_emb, "answer": answer, "ts": now})
+
+
 # Answer cache — key: f"{org_id}:{prompt_hash}" → (payload, monotonic_ts)
 _answer_cache: Dict[str, Tuple[dict, float]] = {}
 ANSWER_CACHE_TTL = float(os.getenv("ANSWER_CACHE_TTL_SECONDS", "600"))
@@ -929,6 +1133,182 @@ def fetch_chunks_by_faiss_ids(faiss_ids: List[int], org_id: str) -> List[dict]:
             (faiss_ids, org_id),
         )
         return cursor.fetchall()
+
+
+@router.post("/tickets/{ticket_id}/chat/stream")
+def chat_with_ai_stream(
+    ticket_id: str,
+    payload: ChatRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    _gate: None = requires_feature("ai_rag"),
+):
+    """Stream AI response tokens via Server-Sent Events."""
+    org_id = require_org_context(request)
+
+    from .ai import stream_groq_completion
+    from .rag import compute_confidence, retrieve, should_escalate
+    from .redact import scrub
+
+    # 1) Verify ticket access
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if is_rep_in_org(user, request):
+            cursor.execute(
+                "SELECT id FROM app.tickets WHERE id = %s AND organization_id = %s",
+                (ticket_id, org_id),
+            )
+        else:
+            cursor.execute(
+                "SELECT id FROM app.tickets WHERE id = %s AND created_by = %s AND organization_id = %s",
+                (ticket_id, user.id, org_id),
+            )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # 2) Rate limiting (shared cooldown dict with the regular endpoint)
+    now = time.time()
+    if now - chat_cooldown.get(ticket_id, 0) < CHAT_COOLDOWN_SECONDS:
+        raise HTTPException(status_code=429, detail="Please wait before asking again")
+    chat_cooldown[ticket_id] = now
+
+    # 3) PII scrub
+    clean_query = scrub(payload.query)
+
+    # 3.5) Semantic cache check — embed once, reuse for retrieve() on a miss
+    _query_emb = None
+    try:
+        from .embeddings import embed_texts as _embed
+
+        _query_emb = np.array(_embed([clean_query])[0])
+        _cached = _cache_lookup(org_id, _query_emb)
+        if _cached is not None:
+
+            def _cached_sse():
+                yield f"data: {json.dumps({'token': _cached})}\n\n"
+                # Persist cache-hit reply to ticket thread
+                try:
+                    with get_db_connection() as _conn:
+                        _cur = _conn.cursor()
+                        _cur.execute(
+                            "INSERT INTO app.messages (ticket_id, sender_id, sender_role, organization_id, body, meta) "
+                            "VALUES (%s, %s, 'ai', %s, %s, %s) RETURNING id, created_at",
+                            (
+                                ticket_id,
+                                user.id,
+                                org_id,
+                                _cached,
+                                json.dumps(
+                                    {"cache_hit": True, "model": "semantic-cache"}
+                                ),
+                            ),
+                        )
+                        _row = _cur.fetchone()
+                        _cur.execute(
+                            "UPDATE app.tickets SET message_count = message_count + 1, "
+                            "last_message_at = %s, updated_at = %s WHERE id = %s",
+                            (_row["created_at"], datetime.utcnow(), ticket_id),
+                        )
+                        _conn.commit()
+                        yield f"data: {json.dumps({'done': True, 'message_id': str(_row['id']), 'cached': True})}\n\n"
+                except Exception:
+                    yield f"data: {json.dumps({'done': True, 'cached': True})}\n\n"
+
+            return StreamingResponse(
+                _cached_sse(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+    except Exception as _ce:
+        import logging
+
+        logging.getLogger(__name__).warning("[cache] stream lookup error: %s", _ce)
+
+    # 4) RAG retrieval — hybrid pgvector search; embeds internally (the
+    # embedding above is only for the semantic-cache lookup, not reused here)
+    retrieval_result = retrieve(clean_query, org_id=org_id)
+    if len(retrieval_result) == 6:
+        chunks, sources, context, scores, faiss_ids, _ = retrieval_result
+    else:
+        chunks, sources, context, scores, faiss_ids = retrieval_result
+
+    # 5) Build SSE generator — streams tokens then persists to DB
+    def event_generator():
+        full_response = ""
+
+        if not chunks:
+            no_ctx = "I don't have enough information in the knowledge base to answer this question. This issue requires human assistance."
+            yield f"data: {json.dumps({'token': no_ctx})}\n\n"
+            full_response = no_ctx
+        else:
+            try:
+                for token in stream_groq_completion(context, clean_query, sources):
+                    full_response += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': 'AI temporarily unavailable. Please try again.'})}\n\n"
+                return
+
+        # Persist the complete response to DB
+        try:
+            citations = [
+                {
+                    "label": sources[i] if i < len(sources) else f"[{i+1}]",
+                    "doc_id": str(chunks[i].get("doc_id", "")),
+                    "score": float(scores[i]) if i < len(scores) else 0.5,
+                }
+                for i in range(len(chunks))
+            ]
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO app.messages (ticket_id, sender_id, sender_role, organization_id, body, meta)
+                    VALUES (%s, %s, 'ai', %s, %s, %s)
+                    RETURNING id, created_at
+                    """,
+                    (
+                        ticket_id,
+                        user.id,
+                        org_id,
+                        full_response,
+                        json.dumps(
+                            {
+                                "citations": citations,
+                                "model": "llama-3.3-70b-versatile",
+                                "streamed": True,
+                            }
+                        ),
+                    ),
+                )
+                row = cursor.fetchone()
+                message_id = str(row["id"])
+                cursor.execute(
+                    """
+                    UPDATE app.tickets
+                    SET message_count = message_count + 1,
+                        last_message_at = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (row["created_at"], datetime.utcnow(), ticket_id),
+                )
+                conn.commit()
+            yield f"data: {json.dumps({'done': True, 'message_id': message_id})}\n\n"
+            # Store successful response in semantic cache (chunks found, non-trivial reply)
+            if _query_emb is not None and chunks and full_response:
+                try:
+                    _cache_store(org_id, _query_emb, full_response, confidence=0.7)
+                except Exception:
+                    pass
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': 'Failed to save message. Please retry.'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Chat conversation context ────────────────────────────────────────────────
@@ -1030,7 +1410,7 @@ def chat_with_ai(
 
     # Start observability tracking
     observer = get_observer()
-    operation_id = observer.start_operation(ticket_id, user.id, "chat", org_id)
+    operation_id = observer.start_operation(ticket_id, user.id, "chat")
 
     # Import here to avoid circular dependencies
     from .ai import (
@@ -1088,6 +1468,49 @@ def chat_with_ai(
     clean_query = scrub(payload.query)
     observer.record_embedding_metrics(clean_query, 0)  # Will update with actual timing
 
+    # 3.5) Semantic cache check — short-circuits before any retrieval/LLM work
+    try:
+        from .embeddings import embed_texts as _embed
+
+        _query_emb = np.array(_embed([clean_query])[0])
+        _cached = _cache_lookup(org_id, _query_emb)
+        if _cached is not None:
+            with get_db_connection() as _conn:
+                _cur = _conn.cursor()
+                _cur.execute(
+                    "INSERT INTO app.messages (ticket_id, sender_id, sender_role, organization_id, body, meta) "
+                    "VALUES (%s, %s, 'ai', %s, %s, %s) RETURNING id",
+                    (
+                        ticket_id,
+                        user.id,
+                        org_id,
+                        _cached,
+                        json.dumps(
+                            {
+                                "cache_hit": True,
+                                "model": "semantic-cache",
+                                "confidence": 0.7,
+                            }
+                        ),
+                    ),
+                )
+                _msg_id = str(_cur.fetchone()["id"])
+                _cur.execute(
+                    "UPDATE app.tickets SET message_count = message_count + 1, updated_at = %s WHERE id = %s",
+                    (datetime.utcnow(), ticket_id),
+                )
+                _conn.commit()
+            observer.finish_operation()
+            return ChatResponse(
+                message_id=_msg_id,
+                content=_cached,
+                citations=[],
+                confidence=0.7,
+                suggest_escalation=False,
+            )
+    except Exception as _ce:
+        observer.add_warning(f"Cache lookup failed: {_ce}")
+
     # 3b) Follow-up queries ("that didn't work either") lose their referent
     # when embedded bare — combine the previous customer message with the
     # current query so retrieval sees what "it" means
@@ -1096,12 +1519,10 @@ def chat_with_ai(
         combined = scrub(prev_customer_msg)[-1000:] + "\n" + clean_query
         retrieval_query = combined[:1200]
 
-    # 4) Retrieve relevant chunks using pgvector search
+    # 4) Retrieve relevant chunks using pgvector search (embeds internally —
+    # the embedding above was only for the semantic-cache lookup)
     retrieval_start = time.time()
-    retrieval_result = retrieve(
-        retrieval_query,
-        org_id=org_id,
-    )
+    retrieval_result = retrieve(retrieval_query, org_id=org_id)
     retrieval_latency = int((time.time() - retrieval_start) * 1000)
 
     # Handle new enhanced return format
@@ -1124,13 +1545,8 @@ def chat_with_ai(
     similar_tickets: list = []
     if chunks:
         try:
-            from .rag import search_similar_tickets
-
-            _qvec = None
-            # Reuse the query embedding by asking retrieve's caller — cheapest
-            # is one extra embed; acceptable (cached by provider at no extra
-            # cost compared to expansion batch, but kept lazy to avoid re-embed)
             from .embeddings import embed_texts
+            from .rag import search_similar_tickets
 
             _qvec = embed_texts([clean_query])[0]
             similar_tickets = search_similar_tickets(org_id, clean_query, _qvec, k=3)
@@ -1147,7 +1563,6 @@ def chat_with_ai(
         except Exception as e:
             logger.warning("Similar-ticket search failed: %s", e)
             similar_tickets = []
-
     if not chunks:
         # No relevant context found - enhanced escalation handling
         observer.add_warning("No relevant chunks found in knowledge base")
@@ -1276,7 +1691,6 @@ def chat_with_ai(
 
     # 5) Generate AI response with enhanced structured generation
     generation_start = time.time()
-
     # Answer cache — identical prompt (history+context+query) replays the
     # LLM result without a generation call (J.4). Message rows persist fresh.
     prompt_hash = compute_prompt_hash(context, clean_query, history_text)
@@ -1290,16 +1704,65 @@ def chat_with_ai(
         latency_ms = 0
     else:
         try:
-            # Try structured generation first
+            # Try structured generation first — inject CASPER tool schemas
             try:
+                tool_schemas = casper_engine.tool_registry.tool_schemas()
                 structured_response, latency_ms = generate_structured_completion(
                     context,
                     clean_query,
                     sources,
                     ticket_context=ticket_context,
                     conversation_history=history_text,
+                    tool_schemas=tool_schemas,
                 )
                 ai_response = structured_response.response
+
+                # Execute any tool calls CASPER requested
+                raw_tool_calls = getattr(structured_response, "tool_calls", None) or []
+                if raw_tool_calls:
+                    from .casper.tools import ExecutionContext as CASPERCtx
+
+                    with get_db_connection() as _tcx_conn:
+                        _tcx_cur = _tcx_conn.cursor()
+                        _ctx = CASPERCtx(
+                            org_id=org_id,
+                            user_id=str(user.id),
+                            user_role=get_user_role(user.id),
+                            ticket_id=ticket_id,
+                            db_cursor=_tcx_cur,
+                        )
+                        tool_results = casper_engine.tool_registry.execute_all(
+                            [
+                                {"tool": tc.tool, "params": tc.params}
+                                for tc in raw_tool_calls
+                            ],
+                            _ctx,
+                        )
+                        _tcx_conn.commit()
+                        # Log to audit table
+                        with get_db_connection() as _log_conn:
+                            _log_cur = _log_conn.cursor()
+                            for tc, tr in zip(raw_tool_calls, tool_results):
+                                try:
+                                    _log_cur.execute(
+                                        "INSERT INTO app.casper_tool_calls "
+                                        "(organization_id, ticket_id, user_id, tool_name, params, "
+                                        " result_success, result_action, result_message) "
+                                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                        (
+                                            org_id,
+                                            ticket_id,
+                                            str(user.id),
+                                            tc.tool,
+                                            json.dumps(tc.params),
+                                            tr.success,
+                                            tr.action_taken,
+                                            tr.message,
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                            _log_conn.commit()
 
                 # Extract confidence from structured response
                 confidence_breakdown = structured_response.confidence_indicators
@@ -1340,7 +1803,6 @@ def chat_with_ai(
             },
             time.monotonic(),
         )
-
     generation_latency = int((time.time() - generation_start) * 1000)
 
     # 6) Enhanced confidence computation with retrieval metrics
@@ -1412,6 +1874,13 @@ def chat_with_ai(
             score=citation_confidence,
         )
         citations.append(citation)
+
+    # 7.5) Store successful response in semantic cache
+    if _query_emb is not None and chunks and not should_escalate_flag:
+        try:
+            _cache_store(org_id, _query_emb, ai_response, confidence)
+        except Exception:
+            pass
 
     # 8) Persist enhanced AI message with comprehensive metadata
     with get_db_connection() as conn:
@@ -1674,6 +2143,18 @@ def resolve_ticket(
         if not row:
             raise HTTPException(404, "Ticket not found")
         conn.commit()
+
+    # FlowBot — ticket_status_changed
+    try:
+        from .flowbot import evaluate_rules as _flowbot
+
+        _flowbot(
+            "ticket_status_changed",
+            {"id": ticket_id, "status": payload.status, "organization_id": org_id},
+            org_id,
+        )
+    except Exception:
+        pass
 
     # Notify customer (fire-and-forget)
     import threading
