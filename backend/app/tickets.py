@@ -1603,7 +1603,7 @@ def chat_with_ai(
 # ── Tags ─────────────────────────────────────────────────────────────────────
 
 
-@router.patch("/tickets/{ticket_id}/tags", response_model=TicketDetail)
+@router.patch("/tickets/{ticket_id}/tags", response_model=TicketWithMessages)
 def update_tags(
     ticket_id: str,
     payload: TagsRequest,
